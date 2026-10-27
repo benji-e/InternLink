@@ -10,6 +10,7 @@ Design: [docs/design/3.4-matching-algorithm-design.md](docs/design/3.4-matching-
 | File | What it does |
 |---|---|
 | `matching_engine/scoring.py` | `score(student, opportunity)` → 0–100 score, breakdown, matched/missing skills |
+| `matching_engine/ranking.py` | `recommend(student, listings, today=...)` → filters, scores, sorts and returns the top 10 |
 | `matching_engine/config.py` | Weights (0.45 / 0.35 / 0.20), `MIN_SCORE`, top-K, timeouts |
 | `matching_engine/normalize.py` | Cleans free-text skills/interests (e.g. `JS` → `javascript`) |
 | `matching_engine/models.py` | `StudentProfile`, `Opportunity`, `MatchResult` |

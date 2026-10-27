@@ -5,6 +5,7 @@ when it lands.
 """
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import date, datetime
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,21 @@ class Opportunity:
     target_programs: Sequence[str] = ()  # empty = open to all programs
     required_skills: Sequence[str] = ()
     tags: Sequence[str] = ()
+
+
+@dataclass(frozen=True)
+class Listing:
+    """An opportunity plus the fields the hard filters and tie-breakers need (Section 4.1)."""
+
+    opportunity_id: int
+    title: str
+    company: str
+    opportunity: Opportunity
+    status: str  # "Open" / "Closed"
+    company_verified: bool
+    deadline: date
+    slots_remaining: int
+    posted_at: datetime
 
 
 @dataclass(frozen=True)
