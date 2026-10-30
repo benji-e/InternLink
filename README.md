@@ -13,7 +13,20 @@ Scoring and ranking are done by the database function `fn_recommendations`
 | File | What it does |
 |---|---|
 | `matching_engine/service.py` | `recommend_for_student(conn, student_id, k=10)` → ranked results with breakdown, `applied` flag and matched/missing skills; raises `ProfileIncomplete` (422) or `MatchingUnavailable` (503) |
-| `matching_engine/config.py` | Default/maximum list size and the 4 s time limit |
+| `matching_engine/api.py` | FastAPI endpoint `GET /api/v1/students/me/recommendations` (JWT login, 401/403/422/503 errors) |
+| `matching_engine/config.py` | List size, 4 s time limit, database pool size |
+| `scripts/load_test.py` | NFR01 load test: N concurrent students against the running API |
+
+### Run the API
+
+```bash
+set INTERNLINK_DSN=postgresql://postgres@localhost:5432/internlink
+set INTERNLINK_JWT_SECRET=<the secret the login service signs tokens with>
+uvicorn matching_engine.api:app --port 8000
+```
+
+Open http://localhost:8000/docs for the interactive API page. Tokens must be HS256 JWTs with
+`sub` = the user's id, `role` = `student` and an `exp` time.
 
 ### Run the tests
 
@@ -32,3 +45,9 @@ Each test runs in a transaction that is rolled back, so the database is left unc
 Without `INTERNLINK_TEST_DSN` the tests are skipped.
 
 One test is marked `xfail`: the known SR20 defect in the interest score (design Section 5.1).
+
+## Testing documents
+
+- [5.3 Integration test plan and report](docs/testing/5.3-integration-test-plan-and-report.md)
+- [5.4 System test plan](docs/testing/5.4-system-test-plan.md)
+- [NFR01 load test result](docs/testing/results/nfr01-realistic-200-users.md)

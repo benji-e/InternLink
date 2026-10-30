@@ -50,6 +50,14 @@ PROFILE_SQL = """
     SELECT (SELECT count(*) FROM student_skills ss WHERE ss.student_id = sp.student_id) AS skills
     FROM student_profiles sp WHERE sp.student_id = %(sid)s"""
 
+STUDENT_FOR_USER_SQL = "SELECT student_id FROM student_profiles WHERE user_id = %s"
+
+
+def student_id_for_user(conn, user_id: int) -> int | None:
+    """The student profile of a logged-in user, or None if they have none."""
+    row = conn.execute(STUDENT_FOR_USER_SQL, (user_id,)).fetchone()
+    return None if row is None else row[0]
+
 RECOMMEND_SQL = """
     SELECT r.rank, r.listing_id, r.score, r.p, r.s, r.i, r.l, r.applied,
            l.title, c.name AS company, l.application_deadline AS deadline,

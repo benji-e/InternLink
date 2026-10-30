@@ -12,7 +12,12 @@ from dataclasses import replace
 import pytest
 
 from matching_engine.config import DEFAULT_CONFIG
-from matching_engine.service import MatchingUnavailable, ProfileIncomplete, recommend_for_student
+from matching_engine.service import (
+    MatchingUnavailable,
+    ProfileIncomplete,
+    recommend_for_student,
+    student_id_for_user,
+)
 
 DSN = os.environ.get("INTERNLINK_TEST_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="INTERNLINK_TEST_DSN not set (no test database)")
@@ -94,6 +99,17 @@ def test_adding_an_interest_never_lowers_a_score(conn):
     conn.execute("INSERT INTO student_interests VALUES (1, 6)")  # Agriculture
     after = {r.listing_id: r.score for r in recommend_for_student(conn, 1, k=50).results}
     assert all(after[i] >= before[i] for i in before if i in after)
+
+
+# ---- Logged-in user -> student profile ---------------------------------------
+
+def test_student_user_maps_to_their_profile(conn):
+    assert student_id_for_user(conn, 10) == 1
+
+
+def test_user_without_student_profile_maps_to_none(conn):
+    assert student_id_for_user(conn, 5) is None  # an employer
+    assert student_id_for_user(conn, 999_999) is None
 
 
 # ---- Errors ------------------------------------------------------------------
