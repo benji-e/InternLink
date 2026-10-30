@@ -6,6 +6,9 @@ __pycache__/
 .hypothesis/
 *.egg-info/
 
+# Personal Claude Code settings
+.claude/settings.local.json
+
 # Editors / OS
 .vscode/*
 !.vscode/settings.json
