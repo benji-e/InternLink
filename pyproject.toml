@@ -1,0 +1,9 @@
+[project]
+name = "internlink-matching-engine"
+version = "0.1.0"
+description = "InternLink Uganda matching engine (WBS 4.6)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
