@@ -72,6 +72,11 @@ def test_closed_listing_is_left_out():
     assert ids(run([listing(1, GOOD, status="Closed"), listing(2, GOOD)])) == [2]
 
 
+def test_database_lower_case_status_counts_as_open():
+    # Lubega's schema stores 'open' / 'closed' in lower case.
+    assert ids(run([listing(1, GOOD, status="open"), listing(2, GOOD, status="closed")])) == [1]
+
+
 def test_unverified_company_is_left_out():
     assert ids(run([listing(1, GOOD, company_verified=False), listing(2, GOOD)])) == [2]
 

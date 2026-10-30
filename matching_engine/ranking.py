@@ -39,7 +39,7 @@ class Recommendations:
 def is_eligible(listing: Listing, today: date, applied_ids: Iterable[int]) -> bool:
     """Section 4.1 hard filters. Yes/no only; they never change the score."""
     return (
-        listing.status == "Open"
+        listing.status.lower() == "open"
         and listing.company_verified
         and listing.deadline >= today
         and listing.slots_remaining > 0
