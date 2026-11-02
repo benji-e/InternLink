@@ -1,0 +1,170 @@
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+
+export class ApiError extends Error {
+  status: number
+  code: string
+
+  constructor(status: number, code: string, message: string) {
+    super(message)
+    this.status = status
+    this.code = code
+  }
+}
+
+export async function apiRequest<T>(
+  path: string,
+  options: RequestInit = {},
+  token?: string,
+): Promise<T> {
+  const headers = new Headers(options.headers)
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...options, headers })
+  } catch {
+    throw new ApiError(0, 'NETWORK_ERROR', 'Could not reach InternLink. Check your connection and try again.')
+  }
+
+  const text = await response.text()
+  let payload: Record<string, unknown> = {}
+  if (text) {
+    try {
+      payload = JSON.parse(text) as Record<string, unknown>
+    } catch {
+      throw new ApiError(response.status, 'INVALID_RESPONSE', 'The server returned an unreadable response.')
+    }
+  }
+  if (!response.ok) {
+    const error = payload.error as { code?: string; message?: string } | undefined
+    const detail = typeof payload.detail === 'string' ? payload.detail : undefined
+    throw new ApiError(
+      response.status,
+      error?.code ?? 'REQUEST_FAILED',
+      error?.message ?? detail ?? (typeof payload.message === 'string' ? payload.message : undefined) ?? 'The request could not be completed.',
+    )
+  }
+  return payload as T
+}
+
+export type CatalogItem = { id: number; name: string }
+export type University = CatalogItem & { location: string }
+export type AuthUser = { user_id: number; full_name: string; email: string; role: 'student' | 'employer' | 'university' | 'admin' }
+
+export async function employerRequest<T>(action: string, token: string, payload: Record<string, unknown> = {}) {
+  const result = await apiRequest<{ ok: boolean; data: T }>(
+    `/api/employer/${action}`,
+    { method: 'POST', body: JSON.stringify(payload) },
+    token,
+  )
+  return result.data
+}
+
+export const studentApi = {
+  login: (email: string, password: string) =>
+    apiRequest<{ access_token: string; user: AuthUser }>(
+      '/api/v1/auth/login',
+      { method: 'POST', body: JSON.stringify({ email, password }) },
+    ),
+  register: (input: Record<string, unknown>) =>
+    apiRequest<{ message: string }>('/api/v1/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  verifyEmail: (token: string) =>
+    apiRequest<{ verified: boolean }>('/api/v1/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    }),
+  universities: () => apiRequest<{ universities: University[] }>('/api/v1/public/universities'),
+  departments: (universityId: number) =>
+    apiRequest<{ departments: CatalogItem[] }>(`/api/v1/public/universities/${universityId}/departments`),
+  programmes: (departmentId: number) =>
+    apiRequest<{ programmes: CatalogItem[] }>(`/api/v1/public/departments/${departmentId}/programmes`),
+  catalogs: () => apiRequest<{ skills: CatalogItem[]; interests: CatalogItem[] }>('/api/v1/public/catalogs'),
+  profile: (token: string) =>
+    apiRequest<{ profile: Record<string, unknown> }>('/api/v1/students/me/profile', {}, token),
+  saveProfile: (token: string, profile: Record<string, unknown>) =>
+    apiRequest<{ profile: Record<string, unknown> }>(
+      '/api/v1/students/me/profile',
+      { method: 'PUT', body: JSON.stringify(profile) },
+      token,
+    ),
+  opportunities: (token: string, query: URLSearchParams) =>
+    apiRequest<{ results: Record<string, unknown>[]; count: number }>(
+      `/api/v1/opportunities?${query.toString()}`,
+      {},
+      token,
+    ),
+  recommendations: (token: string) =>
+    apiRequest<{ results: Record<string, unknown>[]; count: number }>(
+      '/api/v1/students/me/recommendations?limit=10',
+      {},
+      token,
+    ),
+  applications: (token: string) =>
+    apiRequest<{ applications: Record<string, unknown>[] }>(
+      '/api/v1/students/me/applications',
+      {},
+      token,
+    ),
+  apply: (token: string, listingId: number, coverNote: string) =>
+    apiRequest<{ application: Record<string, unknown> }>(
+      '/api/v1/students/me/applications',
+      { method: 'POST', body: JSON.stringify({ listing_id: listingId, cover_note: coverNote }) },
+      token,
+    ),
+  withdraw: (token: string, applicationId: number) =>
+    apiRequest<{ application: Record<string, unknown> }>(
+      `/api/v1/students/me/applications/${applicationId}/withdraw`,
+      { method: 'POST' },
+      token,
+    ),
+  notifications: (token: string) =>
+    apiRequest<{ notifications: Record<string, unknown>[] }>(
+      '/api/v1/students/me/notifications',
+      {},
+      token,
+    ),
+  markNotificationRead: (token: string, notificationId: number) =>
+    apiRequest<{ notification_id: number; is_read: boolean }>(
+      `/api/v1/students/me/notifications/${notificationId}/read`,
+      { method: 'POST' },
+      token,
+    ),
+}
+
+export const roleApi = {
+  adminRegistrations: (token: string) =>
+    apiRequest<{ registrations: Record<string, unknown>[] }>('/api/v1/admin/registrations', {}, token),
+  adminUsers: (token: string) =>
+    apiRequest<{ users: Record<string, unknown>[] }>('/api/v1/admin/users', {}, token),
+  adminAudit: (token: string) =>
+    apiRequest<{ events: Record<string, unknown>[] }>('/api/v1/admin/audit', {}, token),
+  decideRegistration: (token: string, type: string, id: number, action: string, reason?: string) =>
+    apiRequest<{ status: string }>(`/api/v1/admin/registrations/${type}/${id}`, {
+      method: 'POST',
+      body: JSON.stringify({ action, reason }),
+    }, token),
+  updateUser: (token: string, id: number, status: string) =>
+    apiRequest<{ user_id: number; status: string }>(`/api/v1/admin/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }, token),
+  coordinatorDashboard: (token: string) =>
+    apiRequest<{ stats: Record<string, number> }>('/api/v1/coordinator/dashboard', {}, token),
+  coordinatorStudents: (token: string) =>
+    apiRequest<{ students: Record<string, unknown>[] }>('/api/v1/coordinator/students', {}, token),
+  coordinatorPlacements: (token: string) =>
+    apiRequest<{ placements: Record<string, unknown>[] }>('/api/v1/coordinator/placements', {}, token),
+  verifyStudent: (token: string, id: number) =>
+    apiRequest<{ student_id: number; verified: boolean }>(`/api/v1/coordinator/students/${id}`, { method: 'POST' }, token),
+  decidePlacement: (token: string, id: number, action: string, reason?: string) =>
+    apiRequest<{ placement_id: number; status: string }>(`/api/v1/coordinator/placements/${id}`, {
+      method: 'POST',
+      body: JSON.stringify({ action, reason }),
+    }, token),
+}

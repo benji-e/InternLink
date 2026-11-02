@@ -248,7 +248,7 @@ def get_listing_detail(db, session: Session, listing_id: int) -> dict:
     listing = own_listing(db, session, listing_id)
     listing["skills"] = db.query_all(
         """
-        SELECT s.name, ls.is_required
+        SELECT s.skill_id, s.name, ls.is_required
         FROM listing_skills ls JOIN skills s ON s.skill_id = ls.skill_id
         WHERE ls.listing_id = %s ORDER BY s.name
         """,
@@ -256,7 +256,7 @@ def get_listing_detail(db, session: Session, listing_id: int) -> dict:
     )
     listing["programmes"] = db.query_all(
         """
-        SELECT p.name
+        SELECT p.programme_id, p.name
         FROM listing_programmes lp JOIN programmes p ON p.programme_id = lp.programme_id
         WHERE lp.listing_id = %s ORDER BY p.name
         """,
@@ -264,7 +264,7 @@ def get_listing_detail(db, session: Session, listing_id: int) -> dict:
     )
     listing["interests"] = db.query_all(
         """
-        SELECT i.name
+        SELECT i.interest_id, i.name
         FROM listing_interests li JOIN interests i ON i.interest_id = li.interest_id
         WHERE li.listing_id = %s ORDER BY i.name
         """,

@@ -100,7 +100,8 @@ def list_conversations(db, session: Session) -> list[dict]:
     rows = db.query_all(
         """
         SELECT m.application_id, u.full_name AS applicant_name,
-               l.title AS listing_title, max(m.sent_at) AS last_message_at,
+               l.title AS listing_title, a.status AS application_status,
+               max(m.sent_at) AS last_message_at,
                sum(CASE WHEN m.recipient_id = %s AND NOT m.is_read THEN 1 ELSE 0 END) AS unread
         FROM messages m
         JOIN applications a ON a.application_id = m.application_id
@@ -108,7 +109,7 @@ def list_conversations(db, session: Session) -> list[dict]:
         JOIN student_profiles sp ON sp.student_id = a.student_id
         JOIN users u ON u.user_id = sp.user_id
         WHERE l.company_id = %s
-        GROUP BY m.application_id, u.full_name, l.title
+        GROUP BY m.application_id, u.full_name, l.title, a.status
         ORDER BY last_message_at DESC
         """,
         [session.user_id, session.company_id],

@@ -1,0 +1,14 @@
+.env
+.env.*
+.git/
+.venv/
+.vscode/
+.security-tests/
+node_modules/
+__pycache__/
+.pytest_cache/
+docs/
+tests/
+scripts/
+employer_module/tests/
+employer_module/data/

@@ -64,14 +64,14 @@ def register_employer(db, mailer, form: Mapping, *, base_url: str = "http://loca
                     "expires_at": expires_at,
                 },
             )
+            mailer.send(
+                clean["rep_email"],
+                "Verify your email",
+                verification_link(base_url, raw_token),
+            )
     except DatabaseIntegrityError as err:
         raise translate_db_error(err) from err
 
-    mailer.send(
-        clean["rep_email"],
-        "Verify your email",
-        verification_link(base_url, raw_token),
-    )
     return {
         "company_id": company_id,
         "message": "Check your email. After that an administrator will verify your company.",

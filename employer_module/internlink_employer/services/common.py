@@ -152,6 +152,9 @@ def notify_user(
 ) -> None:
     """Write an in-app notification; the notifications module may also email."""
 
+    if getattr(db, "dialect", "") == "postgresql":
+        # PostgreSQL triggers own cross-module notifications for these events.
+        return
     db.insert(
         "notifications",
         {
@@ -209,7 +212,7 @@ def recount_slots(db, listing_id: int) -> None:
 def lock_listing_for_update(db, listing_id: int) -> None:
     """Serialise capacity decisions on MySQL; SQLite serialises writers."""
 
-    if getattr(db, "dialect", "sqlite") == "mysql":
+    if getattr(db, "dialect", "sqlite") in {"mysql", "postgresql"}:
         db.query_one(
             "SELECT listing_id FROM listings WHERE listing_id = %s FOR UPDATE",
             [listing_id],
@@ -219,7 +222,7 @@ def lock_listing_for_update(db, listing_id: int) -> None:
 def lock_application_for_update(db, application_id: int) -> None:
     """Serialise message sending against a concurrent decision (SR10)."""
 
-    if getattr(db, "dialect", "sqlite") == "mysql":
+    if getattr(db, "dialect", "sqlite") in {"mysql", "postgresql"}:
         db.query_one(
             "SELECT application_id FROM applications WHERE application_id = %s FOR UPDATE",
             [application_id],

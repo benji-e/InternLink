@@ -18,6 +18,8 @@ import time
 from datetime import timedelta
 from typing import Any
 
+import jwt
+
 PBKDF2_ALGORITHM = "pbkdf2_sha256"
 PBKDF2_ITERATIONS = 600_000
 SALT_BYTES = 16
@@ -139,26 +141,30 @@ class ReferenceTokenService:
         try:
             body, signature_text = token.split(".", 1)
             supplied_signature = _b64url_decode(signature_text)
-            # Reject non-canonical base64: trailing padding bits must not create
-            # multiple valid strings for the same signature bytes.
-            if _b64url_encode(supplied_signature) != signature_text:
-                return None
             expected_signature = hmac.new(
                 self._secret, body.encode("ascii"), hashlib.sha256
             ).digest()
-            if not hmac.compare_digest(supplied_signature, expected_signature):
-                return None
-            raw_body = _b64url_decode(body)
-            if _b64url_encode(raw_body) != body:
-                return None
-            claims = json.loads(raw_body.decode("utf-8"))
-            if not isinstance(claims, dict):
-                return None
-            user_id = int(claims["user_id"])
-            expires_at = int(claims["exp"])
+            if (
+                _b64url_encode(supplied_signature) == signature_text
+                and hmac.compare_digest(supplied_signature, expected_signature)
+            ):
+                raw_body = _b64url_decode(body)
+                if _b64url_encode(raw_body) == body:
+                    claims = json.loads(raw_body.decode("utf-8"))
+                    if isinstance(claims, dict):
+                        user_id = int(claims["user_id"])
+                        expires_at = int(claims["exp"])
+                        if expires_at >= int(time.time()) and user_id > 0:
+                            claims["user_id"] = user_id
+                            return claims
         except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            pass
+        try:
+            claims = jwt.decode(token, self._secret, algorithms=["HS256"])
+            user_id = int(claims["sub"])
+            if user_id <= 0:
+                return None
+            claims["user_id"] = user_id
+            return claims
+        except (jwt.PyJWTError, ValueError, KeyError, TypeError, OverflowError):
             return None
-        if expires_at < int(time.time()) or user_id <= 0:
-            return None
-        claims["user_id"] = user_id
-        return claims
