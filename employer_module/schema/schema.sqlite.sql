@@ -1,5 +1,5 @@
 -- InternLink Uganda - SQLite reference schema for local development & tests.
--- MySQL deployments should use schema.mysql.sql.
+-- PostgreSQL deployments should use schema.postgres.sql.
 --
 -- This is the subset owned/consumed by the Employer module (WBS 4.4).  Tables
 -- such as student_profiles, applications, placements, messages and

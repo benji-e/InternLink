@@ -52,7 +52,7 @@ One test is marked `xfail`: the known SR20 defect in the interest score (design 
 Registration and company profile (4.4.1-4.4.2), listing lifecycle (4.4.3),
 applicant screening and SR04 decisions (4.4.4), shortlist-only messaging (SR10),
 placements and completion (SR11), dashboard/notifications, plus a standard-library
-JSON API and SQLite/MySQL adapters.
+JSON API and SQLite/PostgreSQL adapters.
 
 See [employer_module/README.md](employer_module/README.md) for the API, integration
 contracts and production notes.
@@ -63,7 +63,7 @@ python -m unittest discover -s tests -v
 ```
 
 The suite is self-contained (in-memory SQLite and reference adapters). Its SQLite
-and MySQL schemas are reference schemas; the shared database schema remains
+and PostgreSQL schemas are reference schemas; the shared database schema remains
 authoritative when the modules are integrated.
 
 ## Testing documents

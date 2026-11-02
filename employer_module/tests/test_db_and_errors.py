@@ -3,7 +3,7 @@
 import json
 import unittest
 
-from internlink_employer.db import MySQLDatabase, SQLiteDatabase
+from internlink_employer.db import PostgresDatabase, SQLiteDatabase
 from internlink_employer.errors import DatabaseIntegrityError, translate_db_error
 from tests.support import add_company, seed_reference
 
@@ -145,44 +145,16 @@ class SQLiteAdapterTests(unittest.TestCase):
         self.assertEqual(unknown.category, "conflict")
 
 
-class MySQLAdapterTests(unittest.TestCase):
-    def test_mysql_adapter_has_clear_optional_dependency_error(self):
+class PostgresAdapterAvailabilityTests(unittest.TestCase):
+    def test_postgres_adapter_has_clear_optional_dependency_error(self):
         try:
-            import pymysql  # noqa: F401
+            import psycopg  # noqa: F401
         except ImportError:
             with self.assertRaises(RuntimeError) as caught:
-                MySQLDatabase(user="root", database="internlink")
-            self.assertIn("PyMySQL", str(caught.exception))
+                PostgresDatabase("postgresql://localhost/internlink")
+            self.assertIn("psycopg", str(caught.exception))
         else:  # pragma: no cover - environment dependent
-            self.skipTest("PyMySQL is installed; live database is not configured")
-
-    def test_mysql_unique_key_error_names_are_normalised(self):
-        error = MySQLDatabase._normalise_integrity_error(
-            Exception(
-                1062,
-                "Duplicate entry 'Acme' for key 'companies.uq_companies_name'",
-            )
-        )
-        self.assertEqual(error.constraint_name, "uq_companies_name")
-        self.assertEqual(translate_db_error(error).category, "conflict")
-
-    def test_mysql_check_and_foreign_key_errors_are_normalised(self):
-        check = MySQLDatabase._normalise_integrity_error(
-            Exception("Check constraint 'ck_listings_slots' is violated.")
-        )
-        self.assertEqual(check.constraint_name, "ck_listings_slots")
-        self.assertEqual(translate_db_error(check).category, "invalid")
-
-        foreign_key = MySQLDatabase._normalise_integrity_error(
-            Exception(
-                1452,
-                "Cannot add or update a child row: a foreign key constraint fails "
-                "(`internlink`.`listings`, CONSTRAINT `fk_listings_company` "
-                "FOREIGN KEY (`company_id`) REFERENCES `companies` (`company_id`))",
-            )
-        )
-        self.assertEqual(foreign_key.constraint_name, "fk_listings_company")
-        self.assertEqual(translate_db_error(foreign_key).category, "invalid")
+            self.skipTest("psycopg is installed; live database is not configured")
 
 
 if __name__ == "__main__":

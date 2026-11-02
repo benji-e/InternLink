@@ -1,2 +1,0 @@
-# Optional: only needed when running against MySQL/MariaDB.
-PyMySQL>=1.1

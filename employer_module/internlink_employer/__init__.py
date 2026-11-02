@@ -1,6 +1,6 @@
 """InternLink Uganda - Employer module (WBS 4.4.1-4.4.5).
 
-Framework-free service layer, dispatch handler, SQLite/MySQL adapters and
+Framework-free service layer, dispatch handler, SQLite/PostgreSQL adapters and
 a minimal WSGI JSON API.
 """
 

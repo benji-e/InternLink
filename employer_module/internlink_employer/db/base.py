@@ -31,15 +31,11 @@ REFERENCE_TABLE_PK = {
 
 
 def quote_identifier(value: str) -> str:
-    """Validate and quote a SQL identifier that originates in our own code.
-
-    Backticks are accepted by both SQLite and MySQL; this keeps the adapter
-    independent of MySQL's ``ANSI_QUOTES`` SQL mode.
-    """
+    """Validate and quote a SQL identifier that originates in our own code."""
 
     if not isinstance(value, str) or not _IDENTIFIER_RE.match(value):
         raise ValueError(f"unsafe SQL identifier: {value!r}")
-    return f"`{value}`"
+    return f'"{value}"'
 
 
 def build_insert_sql(table: str, columns: list[str], returning: str | None = None) -> str:
@@ -56,7 +52,7 @@ class Database(Protocol):
     """The persistence contract used by the service layer.
 
     SQL uses ``%s`` placeholders.  The SQLite adapter translates them to
-    ``?``; the MySQL adapter passes them straight to PyMySQL.
+    ``?``; the PostgreSQL adapter passes them straight to psycopg.
     """
 
     def query_one(self, sql: str, params: Any = ()) -> dict | None: ...
