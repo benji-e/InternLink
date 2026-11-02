@@ -47,6 +47,25 @@ HTTP behavior tests still run.
 
 One test is marked `xfail`: the known SR20 defect in the interest score (design Section 5.1).
 
+## Employer module (WBS 4.4)
+
+Registration and company profile (4.4.1-4.4.2), listing lifecycle (4.4.3),
+applicant screening and SR04 decisions (4.4.4), shortlist-only messaging (SR10),
+placements and completion (SR11), dashboard/notifications, plus a standard-library
+JSON API and SQLite/PostgreSQL adapters.
+
+See [employer_module/README.md](employer_module/README.md) for the API, integration
+contracts and production notes.
+
+```bash
+cd employer_module
+python -m unittest discover -s tests -v
+```
+
+The suite is self-contained (in-memory SQLite and reference adapters). Its SQLite
+and PostgreSQL schemas are reference schemas; the shared database schema remains
+authoritative when the modules are integrated.
+
 ## Testing documents
 
 - [5.3 Integration test plan and report](docs/testing/5.3-integration-test-plan-and-report.md)
