@@ -1,20 +1,21 @@
-"""NFR01 load test (WBS 4.6.3): 200 concurrent students, p95 must be under 5 s.
+"""NFR01 load test (WBS 4.6.3): 200 concurrent students, p95 under 5 s.
 
 Each virtual student logs in as a different seeded student and requests
 recommendations through the real HTTP endpoint in a loop for the given time.
 
-Usage (API already running, e.g. `uvicorn matching_engine.api:app --port 8765`):
+Usage (API already running, e.g. `python -m matching_engine.api --port 8765`):
     python scripts/load_test.py --url http://localhost:8765 --dsn <load database> \
         --secret <JWT secret> --users 200 --seconds 300 --report docs/testing/results/nfr01.md
 """
 import argparse
-import asyncio
+import http.client
 import random
 import statistics
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
-import httpx
 import jwt
 import psycopg
 
@@ -37,20 +38,40 @@ def make_token(user_id: int, secret: str, hours: int = 2) -> str:
     return jwt.encode(claims, secret, algorithm="HS256")
 
 
-async def virtual_student(client, token, stop_at, latencies, statuses, think, rng):
-    headers = {"Authorization": f"Bearer {token}"}
-    if think:  # spread the start so 200 students don't all click in the same instant
-        await asyncio.sleep(rng.uniform(0, 2 * think))
-    while time.perf_counter() < stop_at:
-        start = time.perf_counter()
-        try:
-            response = await client.get(PATH, headers=headers)
-            statuses[response.status_code] = statuses.get(response.status_code, 0) + 1
-        except httpx.HTTPError as exc:
-            statuses[type(exc).__name__] = statuses.get(type(exc).__name__, 0) + 1
-        latencies.append(time.perf_counter() - start)
-        if think:  # the student reads the list before clicking again
-            await asyncio.sleep(rng.uniform(0.5 * think, 1.5 * think))
+def virtual_student(token: str, stop_at: float, think: float, url: tuple, seed: int) -> tuple:
+    scheme, host, port, request_path = url
+    connection_type = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+    connection = connection_type(host, port, timeout=30)
+    rng = random.Random(seed)
+    latencies = []
+    statuses = {}
+    if think:
+        time.sleep(rng.uniform(0, 2 * think))
+
+    try:
+        while time.perf_counter() < stop_at:
+            start = time.perf_counter()
+            try:
+                connection.request(
+                    "GET",
+                    request_path,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                response = connection.getresponse()
+                response.read()
+                status = response.status
+            except (OSError, http.client.HTTPException) as exc:
+                status = type(exc).__name__
+                connection.close()
+                connection = connection_type(host, port, timeout=30)
+            statuses[status] = statuses.get(status, 0) + 1
+            latencies.append(time.perf_counter() - start)
+            if think:
+                time.sleep(rng.uniform(0.5 * think, 1.5 * think))
+    finally:
+        connection.close()
+
+    return latencies, statuses
 
 
 def percentile(values, p):
@@ -58,18 +79,32 @@ def percentile(values, p):
     return ordered[min(len(ordered) - 1, int(round(p / 100 * len(ordered) + 0.5)) - 1)]
 
 
-async def run(args):
+def run(args):
     tokens = [make_token(uid, args.secret) for uid in student_user_ids(args.dsn, args.users)]
-    latencies: list[float] = []
-    statuses: dict = {}
-    limits = httpx.Limits(max_connections=args.users, max_keepalive_connections=args.users)
-    async with httpx.AsyncClient(base_url=args.url, timeout=30, limits=limits) as client:
-        started = time.perf_counter()
-        stop_at = started + args.seconds
-        rng = random.Random(42)
-        await asyncio.gather(*(virtual_student(client, t, stop_at, latencies, statuses, args.think, rng)
-                               for t in tokens))
-        elapsed = time.perf_counter() - started
+    parsed_url = urlsplit(args.url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+        raise ValueError("--url must be an HTTP or HTTPS URL with a host")
+    port = parsed_url.port or (443 if parsed_url.scheme == "https" else 80)
+    request_path = f"{parsed_url.path.rstrip('/')}{PATH}"
+    if parsed_url.query:
+        request_path = f"{request_path}?{parsed_url.query}"
+    url = (parsed_url.scheme, parsed_url.hostname, port, request_path)
+
+    started = time.perf_counter()
+    stop_at = started + args.seconds
+    with ThreadPoolExecutor(max_workers=args.users) as executor:
+        futures = [
+            executor.submit(virtual_student, token, stop_at, args.think, url, 42 + index)
+            for index, token in enumerate(tokens)
+        ]
+        results = [future.result() for future in futures]
+    elapsed = time.perf_counter() - started
+
+    latencies = [latency for student_latencies, _ in results for latency in student_latencies]
+    statuses = {}
+    for _, student_statuses in results:
+        for status, count in student_statuses.items():
+            statuses[status] = statuses.get(status, 0) + count
     return latencies, statuses, elapsed
 
 
@@ -107,7 +142,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--url", required=True)
     parser.add_argument("--dsn", required=True, help="database the API uses, to pick student accounts")
-    parser.add_argument("--secret", required=True, help="JWT secret the API checks tokens with")
+    parser.add_argument("--secret", required=True, help="JWT secret the API checks with")
     parser.add_argument("--users", type=int, default=200)
     parser.add_argument("--seconds", type=int, default=300)
     parser.add_argument("--think", type=float, default=0,
@@ -115,7 +150,7 @@ def main():
     parser.add_argument("--report", help="write the result as Markdown to this file")
     args = parser.parse_args()
 
-    latencies, statuses, elapsed = asyncio.run(run(args))
+    latencies, statuses, elapsed = run(args)
     text = report(args, latencies, statuses, elapsed)
     print(text)
     if args.report:

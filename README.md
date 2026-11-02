@@ -13,7 +13,7 @@ Scoring and ranking are done by the database function `fn_recommendations`
 | File | What it does |
 |---|---|
 | `matching_engine/service.py` | `recommend_for_student(conn, student_id, k=10)` → ranked results with breakdown, `applied` flag and matched/missing skills; raises `ProfileIncomplete` (422) or `MatchingUnavailable` (503) |
-| `matching_engine/api.py` | FastAPI endpoint `GET /api/v1/students/me/recommendations` (JWT login, 401/403/422/503 errors) |
+| `matching_engine/api.py` | Standard-library HTTP endpoint `GET /api/v1/students/me/recommendations` (JWT login, 401/403/422/503 errors); no web framework |
 | `matching_engine/config.py` | List size, 4 s time limit, database pool size |
 | `scripts/load_test.py` | NFR01 load test: N concurrent students against the running API |
 
@@ -22,11 +22,11 @@ Scoring and ranking are done by the database function `fn_recommendations`
 ```bash
 set INTERNLINK_DSN=postgresql://postgres@localhost:5432/internlink
 set INTERNLINK_JWT_SECRET=<the secret the login service signs tokens with>
-uvicorn matching_engine.api:app --port 8000
+python -m matching_engine.api --port 8000
 ```
 
-Open http://localhost:8000/docs for the interactive API page. Tokens must be HS256 JWTs with
-`sub` = the user's id, `role` = `student` and an `exp` time.
+The API listens at `http://127.0.0.1:8000`. Tokens must be HS256 JWTs with `sub` = the user's id,
+`role` = `student` and an `exp` time.
 
 ### Run the tests
 
@@ -42,9 +42,29 @@ pytest
 ```
 
 Each test runs in a transaction that is rolled back, so the database is left unchanged.
-Without `INTERNLINK_TEST_DSN` the tests are skipped.
+Without `INTERNLINK_TEST_DSN`, the PostgreSQL integration tests are skipped; the standard-library
+HTTP behavior tests still run.
 
 One test is marked `xfail`: the known SR20 defect in the interest score (design Section 5.1).
+
+## Employer module (WBS 4.4)
+
+Registration and company profile (4.4.1-4.4.2), listing lifecycle (4.4.3),
+applicant screening and SR04 decisions (4.4.4), shortlist-only messaging (SR10),
+placements and completion (SR11), dashboard/notifications, plus a standard-library
+JSON API and SQLite/MySQL adapters.
+
+See [employer_module/README.md](employer_module/README.md) for the API, integration
+contracts and production notes.
+
+```bash
+cd employer_module
+python -m unittest discover -s tests -v
+```
+
+The suite is self-contained (in-memory SQLite and reference adapters). Its SQLite
+and MySQL schemas are reference schemas; the shared database schema remains
+authoritative when the modules are integrated.
 
 ## Testing documents
 
