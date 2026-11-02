@@ -86,12 +86,19 @@ def mark_notification_read(db, session: Session, notification_id: int) -> dict:
         changed = db.execute(
             """
             UPDATE notifications SET is_read = true
-            WHERE notification_id = %s AND user_id = %s
+            WHERE notification_id = %s AND user_id = %s AND NOT is_read
             """,
             [notification_id, session.user_id],
         )
-        if changed != 1:
-            raise ModuleError("not_found", "Notification not found.")
+        if changed == 0:
+            # MySQL reports changed rows, not matched rows; a second read is a no-op.
+            existing = db.query_one(
+                "SELECT notification_id FROM notifications "
+                "WHERE notification_id = %s AND user_id = %s",
+                [notification_id, session.user_id],
+            )
+            if existing is None:
+                raise ModuleError("not_found", "Notification not found.")
         return {"notification_id": notification_id, "is_read": True}
 
     return run_write(db, session, action)

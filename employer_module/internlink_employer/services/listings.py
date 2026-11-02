@@ -22,9 +22,8 @@ def _clean_search(value) -> str | None:
 
 
 def _like_pattern(term: str) -> str:
-    escaped = (
-        term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    )
+    # "!" is a portable escape character for SQLite and MySQL.
+    escaped = term.replace("!", "!!").replace("%", "!%").replace("_", "!_")
     return f"%{escaped.lower()}%"
 
 
@@ -223,8 +222,8 @@ def list_my_listings(
         WHERE l.company_id = %s
           AND (%s IS NULL OR l.status = %s)
           AND (%s IS NULL
-               OR LOWER(l.title) LIKE %s ESCAPE '\\'
-               OR LOWER(l.description) LIKE %s ESCAPE '\\')
+               OR LOWER(l.title) LIKE %s ESCAPE '!'
+               OR LOWER(l.description) LIKE %s ESCAPE '!')
         ORDER BY l.created_at DESC, l.listing_id DESC
         LIMIT %s OFFSET %s
         """,

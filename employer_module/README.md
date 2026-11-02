@@ -11,7 +11,7 @@ It covers:
 - shortlist-only messaging (SR10)
 - placement listing and completion (SR11)
 - dashboard, in-app notifications and scheduled listing closure/deadline reminders
-- an optional WSGI JSON API, SQLite and PostgreSQL adapters, and a full test suite
+- an optional WSGI JSON API, SQLite and MySQL adapters, and a full test suite
 
 ## Layout
 
@@ -27,9 +27,9 @@ internlink_employer/
   ports.py          Auth/Mailer/Notifier/Storage/MatchingCache interfaces
   adapters.py       stdlib reference adapters for local development
   context.py        AppContext dependency container
-  db/               SQLite + optional PostgreSQL adapters
+  db/               SQLite + optional MySQL adapters
   services/         company, listings, applications, messaging, placements, dashboard
-schema/             reference schemas for SQLite and PostgreSQL
+schema/             reference schemas for SQLite and MySQL
 tests/              unittest suite
 run.py              local development server
 ```
@@ -112,9 +112,28 @@ development/reference implementation.
 ### Database
 
 `AppContext.db` implements the small `Database` contract in `db/base.py`.
-`SQLiteDatabase` is used by tests and local development. `PostgresDatabase`
-uses `psycopg` 3 (`pip install -r requirements-postgres.txt`) and the
-tables/views in `schema/schema.postgres.sql`.
+`SQLiteDatabase` is used by tests and local development. `MySQLDatabase` uses
+PyMySQL (`pip install -r requirements-mysql.txt`) and the tables/views in
+`schema/schema.mysql.sql`. It requires MySQL 8.0.16+ so CHECK constraints are
+enforced, and it stores naive timestamps in UTC.
+
+```python
+from internlink_employer.db import MySQLDatabase
+
+db = MySQLDatabase(
+    host="127.0.0.1",
+    port=3306,
+    user="internlink",
+    password="...",
+    database="internlink",
+    init_schema=True,  # or run schema/schema.mysql.sql through your migration tool
+)
+```
+
+The adapter sets the session variable `@internlink_actor_user_id` for each
+write, so triggers or audit rules can see the acting user. It translates MySQL
+duplicate-key, foreign-key, CHECK and NOT NULL errors into the module's
+`DatabaseIntegrityError` categories.
 
 Shared tables expected by other modules: `companies`, `users`, `auth_tokens`,
 `listings`, `applications`, `placements`, `messages`, `notifications`,
@@ -194,8 +213,8 @@ python -m unittest discover -s tests -v
 ## Production checklist
 
 1. Replace the reference token service with the real Auth module.
-2. Use `PostgresDatabase` and run `schema/schema.postgres.sql` (or the shared
-   project migrations); confirm the trigger/effect split described above.
+2. Use `MySQLDatabase` and run `schema/schema.mysql.sql` (or the shared project
+   migrations); confirm the trigger/effect split described above.
 3. Provide an SMTP/email `Mailer`, the notifications `Notifier`, private object
    `Storage` and the real matching cache.
 4. Set `INTERNLINK_TOKEN_SECRET`, serve behind HTTPS, add rate limiting, and

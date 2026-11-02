@@ -207,9 +207,9 @@ def recount_slots(db, listing_id: int) -> None:
 
 
 def lock_listing_for_update(db, listing_id: int) -> None:
-    """Serialise capacity decisions on PostgreSQL; SQLite serialises writers."""
+    """Serialise capacity decisions on MySQL; SQLite serialises writers."""
 
-    if getattr(db, "dialect", "sqlite") == "postgres":
+    if getattr(db, "dialect", "sqlite") == "mysql":
         db.query_one(
             "SELECT listing_id FROM listings WHERE listing_id = %s FOR UPDATE",
             [listing_id],
@@ -219,7 +219,7 @@ def lock_listing_for_update(db, listing_id: int) -> None:
 def lock_application_for_update(db, application_id: int) -> None:
     """Serialise message sending against a concurrent decision (SR10)."""
 
-    if getattr(db, "dialect", "sqlite") == "postgres":
+    if getattr(db, "dialect", "sqlite") == "mysql":
         db.query_one(
             "SELECT application_id FROM applications WHERE application_id = %s FOR UPDATE",
             [application_id],

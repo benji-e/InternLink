@@ -1,2 +1,0 @@
-# Optional: only needed when running against PostgreSQL.
-psycopg[binary]>=3.1
