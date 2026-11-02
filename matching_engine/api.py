@@ -1,24 +1,21 @@
-"""Recommendations API (WBS 4.6.2), built with FastAPI.
-
-    GET /api/v1/students/me/recommendations?limit=10
-    Authorization: Bearer <JWT with sub=<user_id>, role=student>
+"""Standard-library HTTP API for matching-engine recommendations.
 
 Run locally:
     set INTERNLINK_DSN=postgresql://postgres@localhost:5432/internlink
     set INTERNLINK_JWT_SECRET=<same secret the login service signs tokens with>
-    uvicorn matching_engine.api:app --port 8000
-Interactive docs are then at http://localhost:8000/docs
+    python -m matching_engine.api --port 8000
 """
+import argparse
+import json
+import logging
 import os
-from contextlib import asynccontextmanager
 from datetime import date
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 import jwt
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import psycopg
 from psycopg_pool import ConnectionPool
-from pydantic import BaseModel
 
 from matching_engine.config import DEFAULT_CONFIG, ServiceConfig
 from matching_engine.service import (
@@ -28,33 +25,8 @@ from matching_engine.service import (
     student_id_for_user,
 )
 
-
-# ---- Response shapes (also shown in the /docs page) ---------------------------
-
-class Breakdown(BaseModel):
-    programme: float | None
-    skills: float | None
-    interests: float | None
-    location: float | None  # null when the student has no preferred location
-
-
-class RecommendationOut(BaseModel):
-    rank: int
-    listing_id: int
-    title: str
-    company: str
-    score: int
-    breakdown: Breakdown
-    applied: bool
-    matched_skills: list[str]
-    missing_skills: list[str]
-    deadline: date
-
-
-class RecommendationsOut(BaseModel):
-    algorithm: str
-    count: int
-    results: list[RecommendationOut]
+log = logging.getLogger(__name__)
+RECOMMENDATIONS_PATH = "/api/v1/students/me/recommendations"
 
 
 class ApiError(Exception):
@@ -62,68 +34,174 @@ class ApiError(Exception):
         self.status, self.code, self.message = status, code, message
 
 
-# ---- App ----------------------------------------------------------------------
+def _json_default(value):
+    if isinstance(value, date):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
-def create_app(dsn: str | None = None, jwt_secret: str | None = None,
-               cfg: ServiceConfig = DEFAULT_CONFIG) -> FastAPI:
+
+def create_server(
+    dsn: str | None = None,
+    jwt_secret: str | None = None,
+    cfg: ServiceConfig = DEFAULT_CONFIG,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+) -> ThreadingHTTPServer:
+    """Create the recommendation HTTP server and open its database pool."""
     dsn = dsn or os.environ["INTERNLINK_DSN"]
     jwt_secret = jwt_secret or os.environ["INTERNLINK_JWT_SECRET"]
     pool = ConnectionPool(dsn, min_size=2, max_size=cfg.pool_size, open=False)
 
-    @asynccontextmanager
-    async def lifespan(_app):
+    class RequestHandler(BaseHTTPRequestHandler):
+        def _send_json(self, status: int, payload: dict):
+            body = json.dumps(payload, default=_json_default).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_api_error(self, error: ApiError):
+            self._send_json(
+                error.status,
+                {"error": {"code": error.code, "message": error.message}},
+            )
+
+        def _send_http_error(self, status: int, detail: str, *, authenticate: bool = False):
+            if authenticate:
+                self.send_response(status)
+                self.send_header("WWW-Authenticate", "Bearer")
+                body = json.dumps({"detail": detail}).encode("utf-8")
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self._send_json(status, {"detail": detail})
+
+        def do_GET(self):
+            parsed_path = urlsplit(self.path)
+            if parsed_path.path != RECOMMENDATIONS_PATH:
+                self._send_http_error(404, "Not Found")
+                return
+
+            authorization = self.headers.get("Authorization", "")
+            scheme, separator, credentials = authorization.partition(" ")
+            if scheme.lower() != "bearer" or not separator or not credentials:
+                self._send_http_error(401, "Not logged in", authenticate=True)
+                return
+
+            try:
+                claims = jwt.decode(
+                    credentials,
+                    jwt_secret,
+                    algorithms=["HS256"],
+                    options={"require": ["exp", "sub", "role"]},
+                )
+            except jwt.PyJWTError:
+                self._send_http_error(401, "Invalid or expired token", authenticate=True)
+                return
+
+            if claims["role"] != "student":
+                self._send_http_error(403, "Only students can get recommendations")
+                return
+
+            try:
+                user_id = int(claims["sub"])
+            except (TypeError, ValueError, OverflowError):
+                self._send_http_error(401, "Invalid or expired token", authenticate=True)
+                return
+
+            query = parse_qs(parsed_path.query, keep_blank_values=True)
+            raw_limit = query.get("limit", [str(cfg.default_k)])[0]
+            try:
+                limit = int(raw_limit)
+            except ValueError:
+                self._send_http_error(422, "Invalid limit")
+                return
+            if not 1 <= limit <= cfg.max_k:
+                self._send_http_error(422, "Invalid limit")
+                return
+
+            try:
+                with pool.connection() as conn:
+                    student_id = student_id_for_user(conn, user_id)
+                    if student_id is None:
+                        raise ProfileIncomplete("No student profile")
+                    result = recommend_for_student(conn, student_id, k=limit, cfg=cfg)
+            except ProfileIncomplete:
+                self._send_api_error(
+                    ApiError(
+                        422,
+                        "PROFILE_INCOMPLETE",
+                        "Add your programme and at least one skill to get recommendations",
+                    )
+                )
+                return
+            except MatchingUnavailable:
+                self._send_api_error(
+                    ApiError(
+                        503,
+                        "MATCHING_UNAVAILABLE",
+                        "Couldn't load recommendations. Please retry.",
+                    )
+                )
+                return
+            except psycopg.Error:
+                log.warning("Recommendation profile lookup failed for user %s", user_id, exc_info=True)
+                self._send_api_error(
+                    ApiError(
+                        503,
+                        "MATCHING_UNAVAILABLE",
+                        "Couldn't load recommendations. Please retry.",
+                    )
+                )
+                return
+
+            self._send_json(
+                200,
+                {
+                    "algorithm": result.algorithm,
+                    "count": result.count,
+                    "results": [vars(recommendation) for recommendation in result.results],
+                },
+            )
+
+        def log_message(self, format, *args):
+            log.info("%s - %s", self.address_string(), format % args)
+
+    class RecommendationServer(ThreadingHTTPServer):
+        daemon_threads = True
+
+        def server_close(self):
+            try:
+                super().server_close()
+            finally:
+                pool.close()
+
+    try:
         pool.open(wait=True)
-        yield
+        return RecommendationServer((host, port), RequestHandler)
+    except Exception:
         pool.close()
-
-    app = FastAPI(title="InternLink matching API", version="1.0", lifespan=lifespan)
-    bearer = HTTPBearer(auto_error=False)
-
-    @app.exception_handler(ApiError)
-    async def api_error(_request: Request, exc: ApiError):
-        return JSONResponse(status_code=exc.status,
-                            content={"error": {"code": exc.code, "message": exc.message}})
-
-    def current_student_user(creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -> int:
-        """SR17 / NFR05: only a logged-in student may call this endpoint."""
-        if creds is None:
-            raise HTTPException(401, "Not logged in", headers={"WWW-Authenticate": "Bearer"})
-        try:
-            claims = jwt.decode(creds.credentials, jwt_secret, algorithms=["HS256"],
-                                options={"require": ["exp", "sub", "role"]})
-        except jwt.PyJWTError:
-            raise HTTPException(401, "Invalid or expired token", headers={"WWW-Authenticate": "Bearer"})
-        if claims["role"] != "student":
-            raise HTTPException(403, "Only students can get recommendations")
-        return int(claims["sub"])
-
-    @app.get("/api/v1/students/me/recommendations", response_model=RecommendationsOut,
-             summary="Ranked internship recommendations for the logged-in student (SR03)")
-    def recommendations(user_id: int = Depends(current_student_user),
-                        limit: int = Query(cfg.default_k, ge=1, le=cfg.max_k)):
-        # NFR06: the student comes from the token, never from the URL.
-        try:
-            with pool.connection() as conn:
-                student_id = student_id_for_user(conn, user_id)
-                if student_id is None:
-                    raise ProfileIncomplete("No student profile")
-                result = recommend_for_student(conn, student_id, k=limit, cfg=cfg)
-        except ProfileIncomplete:
-            raise ApiError(422, "PROFILE_INCOMPLETE",
-                           "Add your programme and at least one skill to get recommendations")
-        except MatchingUnavailable:
-            raise ApiError(503, "MATCHING_UNAVAILABLE", "Couldn't load recommendations. Please retry.")
-        return {
-            "algorithm": result.algorithm,
-            "count": result.count,
-            "results": [vars(r) for r in result.results],
-        }
-
-    return app
+        raise
 
 
-def __getattr__(name):
-    # `uvicorn matching_engine.api:app` builds the app from environment variables.
-    if name == "app":
-        return create_app()
-    raise AttributeError(name)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+
+    server = create_server(host=args.host, port=args.port)
+    log.info("InternLink matching API listening on %s:%s", args.host, args.port)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

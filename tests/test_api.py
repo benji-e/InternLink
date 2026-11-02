@@ -2,13 +2,19 @@
 
 Runs against the PR #2 seed database; skipped when INTERNLINK_TEST_DSN is not set.
 """
+import http.client
+import json
 import os
+import threading
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 import jwt
 import pytest
 
+from matching_engine.api import create_server
 from matching_engine.config import DEFAULT_CONFIG
 
 DSN = os.environ.get("INTERNLINK_TEST_DSN")
@@ -28,12 +34,43 @@ def auth(**kwargs):
     return {"Authorization": f"Bearer {token(**kwargs)}"}
 
 
+class ApiResponse:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self._body = body
+
+    def json(self):
+        return json.loads(self._body)
+
+
+class ApiTestClient:
+    def __init__(self, server):
+        self.server = server
+        self.thread = threading.Thread(target=server.serve_forever, daemon=True)
+        self.thread.start()
+        self.host, self.port = server.server_address
+
+    def get(self, path, *, headers=None, params=None):
+        if params:
+            path = f"{path}?{urlencode(params)}"
+        connection = http.client.HTTPConnection(self.host, self.port)
+        try:
+            connection.request("GET", path, headers=headers or {})
+            response = connection.getresponse()
+            return ApiResponse(response.status, response.read())
+        finally:
+            connection.close()
+
+@contextmanager
 def make_client(cfg=DEFAULT_CONFIG):
-    from fastapi.testclient import TestClient
-
-    from matching_engine.api import create_app
-
-    return TestClient(create_app(dsn=DSN, jwt_secret=SECRET, cfg=cfg))
+    server = create_server(dsn=DSN, jwt_secret=SECRET, cfg=cfg, port=0)
+    client = ApiTestClient(server)
+    try:
+        yield client
+    finally:
+        server.shutdown()
+        client.thread.join()
+        server.server_close()
 
 
 @pytest.fixture
