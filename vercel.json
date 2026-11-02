@@ -1,5 +1,5 @@
 {
-  "installCommand": "npm --prefix frontend install",
+  "installCommand": "python -m pip install -r requirements.txt && npm --prefix frontend install",
   "buildCommand": "npm --prefix frontend run build",
   "outputDirectory": "frontend/dist",
   "rewrites": [
