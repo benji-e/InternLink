@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>InternLink Uganda - Find your internship</title>
+  <meta name="description" content="InternLink connects Ugandan university students with verified internship opportunities.">
+  <link rel="stylesheet" href="frontend/css/styles.css">
+</head>
+<body>
+
+  <!-- ===================== Header ===================== -->
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/" aria-label="InternLink Uganda home">
+        <span class="brand-mark">IL</span>
+        <span>Intern<span class="accent">Link</span></span>
+      </a>
+      <nav class="nav-actions" aria-label="Account">
+        <button type="button" class="btn btn-outline" data-open="login">Log in</button>
+        <button type="button" class="btn btn-primary" data-open="signup">Create account</button>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- Shown by index.js after the email-verification link is opened -->
+    <div class="container">
+      <div id="verify-banner" class="alert mt-2" hidden role="status"></div>
+    </div>
+
+    <!-- ===================== Hero ===================== -->
+    <section class="hero">
+      <div class="container">
+        <span class="eyebrow">For Ugandan university students</span>
+        <h1>Find the internship that fits you.</h1>
+        <p class="lead">
+          InternLink matches your skills, programme and interests with internship
+          opportunities from verified companies, and lets you track every application in one place.
+        </p>
+        <div class="hero-actions">
+          <button type="button" class="btn btn-accent btn-lg" data-open="signup">Create account</button>
+          <button type="button" class="btn btn-outline-light btn-lg" data-open="login">Log in</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== Features ===================== -->
+    <section class="section">
+      <div class="container">
+        <h2 class="section-title">Everything you need as a student</h2>
+        <p class="section-sub">Your profile, your opportunities and your applications, together in one dashboard.</p>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">👤</div>
+            <h3>Manage your profile</h3>
+            <p class="muted mb-0">Keep your details, skills, interests and CV up to date so companies see your best side.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">🔍</div>
+            <h3>Find opportunities</h3>
+            <p class="muted mb-0">Search and filter open internships by sector, location, duration and more.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">⭐</div>
+            <h3>Get recommendations</h3>
+            <p class="muted mb-0">See how well each opportunity matches you, and which skills you are missing.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">📋</div>
+            <h3>Track your applications</h3>
+            <p class="muted mb-0">Follow every application from submitted to accepted, and withdraw if your plans change.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== How it works ===================== -->
+    <section class="section" style="padding-top: 0;">
+      <div class="container">
+        <h2 class="section-title">How it works</h2>
+        <p class="section-sub">Three steps from sign-up to application.</p>
+        <ol class="steps">
+          <li>
+            <h3>Create your account</h3>
+            <p class="muted mb-0">Sign up with your university email address, programme and student number.</p>
+          </li>
+          <li>
+            <h3>Complete your profile</h3>
+            <p class="muted mb-0">Add your skills, interests and CV. Your university coordinator verifies your profile.</p>
+          </li>
+          <li>
+            <h3>Apply and track</h3>
+            <p class="muted mb-0">Apply to the opportunities that suit you and follow each application's status.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">InternLink Uganda &middot; Student portal</div>
+  </footer>
+
+  <!-- ===================== Login dialog ===================== -->
+  <div id="login-modal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <button type="button" class="modal-close" data-close aria-label="Close">&times;</button>
+      <h2 id="login-title">Log in</h2>
+      <p class="modal-sub">Welcome back. Log in to open your dashboard.</p>
+
+      <div id="login-error" class="alert alert-error" role="alert" hidden></div>
+
+      <form id="login-form" method="post" novalidate>
+        <div class="form-group">
+          <label for="login-email" class="required">Email</label>
+          <input type="email" id="login-email" name="email" autocomplete="username" maxlength="254" required>
+        </div>
+        <div class="form-group">
+          <label for="login-password" class="required">Password</label>
+          <input type="password" id="login-password" name="password" autocomplete="current-password" maxlength="200" required>
+        </div>
+        <button type="submit" id="login-submit" class="btn btn-primary btn-block">Log in</button>
+      </form>
+
+      <p class="switch-link">
+        New here? <button type="button" class="link-button" data-switch="signup">Create an account</button>
+      </p>
+    </div>
+  </div>
+
+  <!-- ===================== Sign-up dialog ===================== -->
+  <div id="signup-modal" class="modal-overlay" hidden>
+    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="signup-title">
+      <button type="button" class="modal-close" data-close aria-label="Close">&times;</button>
+      <h2 id="signup-title">Create your student account</h2>
+      <p class="modal-sub">Use your university email address. Fields marked * are required.</p>
+
+      <div id="signup-error" class="alert alert-error" role="alert" hidden></div>
+
+      <form id="signup-form" method="post" novalidate>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="signup-name" class="required">Full name</label>
+            <input type="text" id="signup-name" name="full_name" autocomplete="name" maxlength="100" required>
+          </div>
+          <div class="form-group">
+            <label for="signup-phone">Phone number</label>
+            <input type="tel" id="signup-phone" name="phone" autocomplete="tel" maxlength="20" placeholder="+256 700 000000">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="signup-university" class="required">University</label>
+          <select id="signup-university" name="university_id" required>
+            <option value="">Loading universities...</option>
+          </select>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="signup-department" class="required">Department</label>
+            <select id="signup-department" name="department_id" required disabled>
+              <option value="">Choose a university first</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="signup-programme" class="required">Programme</label>
+            <select id="signup-programme" name="programme_id" required disabled>
+              <option value="">Choose a department first</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="signup-student-number" class="required">Student number</label>
+            <input type="text" id="signup-student-number" name="student_number" maxlength="40" autocomplete="off" required>
+          </div>
+          <div class="form-group">
+            <label for="signup-year" class="required">Year of study</label>
+            <select id="signup-year" name="year_of_study" required>
+              <option value="">Choose...</option>
+              <option value="1">Year 1</option>
+              <option value="2">Year 2</option>
+              <option value="3">Year 3</option>
+              <option value="4">Year 4</option>
+              <option value="5">Year 5</option>
+              <option value="6">Year 6</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="signup-email" class="required">University email</label>
+          <input type="email" id="signup-email" name="email" autocomplete="email" maxlength="254" required>
+          <div id="signup-email-hint" class="field-hint">Choose your university first to see which email address is accepted.</div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="signup-password" class="required">Password</label>
+            <input type="password" id="signup-password" name="password" autocomplete="new-password" maxlength="72" required>
+            <div class="field-hint">At least 8 characters, with a letter and a number.</div>
+          </div>
+          <div class="form-group">
+            <label for="signup-confirm" class="required">Confirm password</label>
+            <input type="password" id="signup-confirm" name="confirm_password" autocomplete="new-password" maxlength="72" required>
+          </div>
+        </div>
+
+        <button type="submit" id="signup-submit" class="btn btn-primary btn-block">Create account</button>
+      </form>
+
+      <p class="switch-link">
+        Already have an account? <button type="button" class="link-button" data-switch="login">Log in</button>
+      </p>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/index.js"></script>
+</body>
+</html>

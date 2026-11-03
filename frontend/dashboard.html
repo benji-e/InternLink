@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard - InternLink Uganda</title>
+  <link rel="stylesheet" href="/css/styles.css">
+  <style>
+    /* Dashboard-only additions. Move these into styles.css when convenient. */
+    .dash-nav { display: flex; gap: .25rem; flex-wrap: wrap; padding: .5rem 0; border-bottom: 1px solid rgba(0,0,0,.12); }
+    .dash-nav a { padding: .5rem .9rem; border-radius: 6px; text-decoration: none; color: inherit; font-weight: 500; }
+    .dash-nav a:hover { background: rgba(0,0,0,.06); }
+    .dash-nav a.active { background: rgba(0,0,0,.1); font-weight: 700; }
+    .dash-nav a:focus-visible, .dash-nav button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+    .view { padding: 1.5rem 0 3rem; }
+    .view-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .view-head h1, .view-head h2 { margin: 0; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .dash-card { border: 1px solid rgba(0,0,0,.14); border-radius: 8px; padding: 1rem 1.1rem; background: #fff; }
+    .stat-value { font-size: 1.8rem; font-weight: 700; line-height: 1.1; }
+    .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem; }
+    .opp-list { display: grid; gap: .9rem; }
+    .opp-card { display: grid; gap: .5rem; }
+    .opp-top { display: flex; justify-content: space-between; gap: .75rem; align-items: flex-start; }
+    .opp-title { margin: 0; font-size: 1.05rem; }
+    .opp-meta { display: flex; flex-wrap: wrap; gap: .25rem 1rem; font-size: .9rem; }
+    .opp-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+    .chip { padding: .1rem .55rem; border-radius: 999px; font-size: .8rem; border: 1px solid rgba(0,0,0,.2); }
+    .chip-missing { border-style: dashed; }
+    .filter-bar { display: flex; flex-wrap: wrap; gap: .75rem; margin-bottom: 1rem; }
+    .filter-bar > * { flex: 1 1 200px; }
+    .pager { display: flex; justify-content: center; align-items: center; gap: 1rem; margin-top: 1.25rem; }
+    .table-wrap { overflow-x: auto; }
+    .table-wrap table { width: 100%; border-collapse: collapse; }
+    .table-wrap th, .table-wrap td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid rgba(0,0,0,.1); vertical-align: top; }
+    .empty { text-align: center; padding: 2rem 1rem; }
+    .progress { height: 8px; border-radius: 999px; background: rgba(0,0,0,.1); overflow: hidden; margin-top: .5rem; }
+    .progress > span { display: block; height: 100%; background: currentColor; }
+    .detail-body { white-space: pre-line; }
+    .dl { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; margin: 0; }
+    .dl dt { font-weight: 600; }
+    .dl dd { margin: 0; }
+    textarea { width: 100%; min-height: 6rem; }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+  </style>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/dashboard.html" aria-label="InternLink Uganda dashboard">
+        <span class="brand-mark">IL</span>
+        <span>Intern<span class="accent">Link</span></span>
+      </a>
+      <div class="nav-actions">
+        <span id="header-name" class="muted"></span>
+        <button type="button" id="logout-button" class="btn btn-outline">Log out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <nav class="dash-nav" aria-label="Dashboard sections">
+      <a href="#overview" data-view="overview">Overview</a>
+      <a href="#opportunities" data-view="opportunities">Opportunities</a>
+      <a href="#recommendations" data-view="recommendations">Recommended for you</a>
+      <a href="#applications" data-view="applications">My applications</a>
+      <a href="#profile" data-view="profile">My profile</a>
+    </nav>
+
+    <!-- ============ Overview ============ -->
+    <section id="view-overview" class="view" hidden>
+      <div class="view-head"><h1 id="welcome-title">Welcome</h1></div>
+      <div id="overview-error" class="alert alert-error" role="alert" hidden></div>
+      <div class="stat-grid" id="overview-stats"></div>
+      <div class="two-col">
+        <div>
+          <div class="view-head"><h2>Best matches</h2><a href="#recommendations">See all</a></div>
+          <div id="overview-matches" class="opp-list"></div>
+        </div>
+        <div>
+          <div class="view-head"><h2>Latest applications</h2><a href="#applications">See all</a></div>
+          <div id="overview-applications"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Opportunities ============ -->
+    <section id="view-opportunities" class="view" hidden>
+      <div class="view-head"><h2>Open opportunities</h2><span id="opp-count" class="muted"></span></div>
+      <div class="filter-bar">
+        <input type="search" id="opp-search" placeholder="Search by title, company or skill" aria-label="Search opportunities" maxlength="100">
+        <input type="search" id="opp-location" placeholder="Location (for example Kampala)" aria-label="Filter by location" maxlength="100">
+      </div>
+      <div id="opp-error" class="alert alert-error" role="alert" hidden></div>
+      <div id="opp-list" class="opp-list" aria-live="polite"></div>
+      <div id="opp-pager" class="pager" hidden>
+        <button type="button" class="btn btn-outline" id="opp-prev">Previous</button>
+        <span id="opp-page"></span>
+        <button type="button" class="btn btn-outline" id="opp-next">Next</button>
+      </div>
+    </section>
+
+    <!-- ============ Recommendations ============ -->
+    <section id="view-recommendations" class="view" hidden>
+      <div class="view-head"><h2>Recommended for you</h2></div>
+      <p class="muted">Matches are based on your skills, interests and programme. Add skills to your profile to improve them.</p>
+      <div id="rec-error" class="alert alert-error" role="alert" hidden></div>
+      <div id="rec-list" class="opp-list" aria-live="polite"></div>
+    </section>
+
+    <!-- ============ Applications ============ -->
+    <section id="view-applications" class="view" hidden>
+      <div class="view-head"><h2>My applications</h2></div>
+      <div id="app-error" class="alert alert-error" role="alert" hidden></div>
+      <div id="app-list" aria-live="polite"></div>
+    </section>
+
+    <!-- ============ Profile ============ -->
+    <section id="view-profile" class="view" hidden>
+      <div class="view-head"><h2>My profile</h2></div>
+      <div id="profile-error" class="alert alert-error" role="alert" hidden></div>
+      <div class="two-col">
+        <div class="dash-card">
+          <h3>Account</h3>
+          <dl class="dl" id="profile-account"></dl>
+          <div class="mt-2">
+            <strong>Profile completeness</strong>
+            <div class="progress" aria-hidden="true"><span id="profile-bar" style="width:0%"></span></div>
+            <div id="profile-percent" class="muted"></div>
+          </div>
+        </div>
+        <div class="dash-card">
+          <h3>CV</h3>
+          <div id="cv-status" class="muted">No CV uploaded yet.</div>
+          <div class="form-group mt-2">
+            <label for="cv-file">Upload a CV (PDF, DOC or DOCX, up to 5 MB)</label>
+            <input type="file" id="cv-file" accept=".pdf,.doc,.docx">
+          </div>
+          <div class="opp-actions">
+            <button type="button" id="cv-upload" class="btn btn-primary">Upload CV</button>
+            <button type="button" id="cv-delete" class="btn btn-outline" hidden>Remove CV</button>
+          </div>
+        </div>
+      </div>
+
+      <form id="profile-form" class="dash-card mt-2" novalidate>
+        <h3>Edit your details</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="profile-phone">Phone number</label>
+            <input type="tel" id="profile-phone" maxlength="20" placeholder="+256 700 000000" autocomplete="tel">
+          </div>
+          <div class="form-group">
+            <label for="profile-year" class="required">Year of study</label>
+            <select id="profile-year">
+              <option value="1">Year 1</option><option value="2">Year 2</option><option value="3">Year 3</option>
+              <option value="4">Year 4</option><option value="5">Year 5</option><option value="6">Year 6</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="profile-bio">About you</label>
+          <textarea id="profile-bio" maxlength="1000"></textarea>
+          <div class="field-hint">Up to 1000 characters.</div>
+        </div>
+        <div class="form-group">
+          <label for="profile-skills">Skills</label>
+          <input type="text" id="profile-skills" maxlength="500" placeholder="Python, Excel, Public speaking">
+          <div class="field-hint">Separate skills with commas.</div>
+        </div>
+        <div class="form-group">
+          <label for="profile-interests">Interests</label>
+          <input type="text" id="profile-interests" maxlength="500" placeholder="Agriculture, Fintech, Health">
+          <div class="field-hint">Separate interests with commas.</div>
+        </div>
+        <button type="submit" id="profile-save" class="btn btn-primary">Save changes</button>
+      </form>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">InternLink Uganda &middot; Student portal</div>
+  </footer>
+
+  <!-- ===================== Opportunity details ===================== -->
+  <div id="opp-modal" class="modal-overlay" hidden>
+    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="opp-modal-title">
+      <button type="button" class="modal-close" data-close aria-label="Close">&times;</button>
+      <h2 id="opp-modal-title">Opportunity</h2>
+      <div id="opp-modal-error" class="alert alert-error" role="alert" hidden></div>
+      <div id="opp-modal-body"></div>
+      <div class="opp-actions mt-2" id="opp-modal-actions"></div>
+    </div>
+  </div>
+
+  <!-- ===================== Apply ===================== -->
+  <div id="apply-modal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="apply-title">
+      <button type="button" class="modal-close" data-close aria-label="Close">&times;</button>
+      <h2 id="apply-title">Apply</h2>
+      <p class="modal-sub" id="apply-sub"></p>
+      <div id="apply-error" class="alert alert-error" role="alert" hidden></div>
+      <form id="apply-form" novalidate>
+        <div class="form-group">
+          <label for="apply-cover">Cover note (optional)</label>
+          <textarea id="apply-cover" maxlength="2000" placeholder="Tell the company why you are a good fit."></textarea>
+        </div>
+        <button type="submit" id="apply-submit" class="btn btn-primary btn-block">Send application</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/applications.js"></script>
+  <script src="/js/opportunities.js"></script>
+  <script src="/js/recommendations.js"></script>
+  <script src="/js/profile.js"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>
