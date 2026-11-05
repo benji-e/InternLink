@@ -8,6 +8,13 @@ and audit records.
 
 ## Features
 
+### Accounts (all roles)
+
+- One sign-up screen: choose student, employer or university.
+- Universities register themselves; the person who registers becomes the
+  first coordinator, active once an administrator verifies the university.
+- Resend the confirmation email, and reset a forgotten password by email.
+
 ### Student
 
 - University email registration and email verification.
@@ -151,7 +158,13 @@ coordinator and administrator accounts.
 ### Student and public endpoints
 
 - `POST /api/v1/auth/register`, `/api/v1/auth/login`,
-  `/api/v1/auth/verify-email`
+  `/api/v1/auth/verify-email` (students and coordinators)
+- `POST /api/v1/auth/register-university` creates a pending university and
+  its first coordinator
+- `POST /api/v1/auth/resend-verification`, `/api/v1/auth/forgot-password`
+  always answer `202` with the same message, so they don't reveal which
+  emails have accounts
+- `POST /api/v1/auth/reset-password` with `token` and `password`
 - `GET /api/v1/public/universities`, `/api/v1/public/catalogs`
 - `GET /api/v1/public/universities/{id}/departments`
 - `GET /api/v1/public/departments/{id}/programmes`
