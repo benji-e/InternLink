@@ -527,3 +527,19 @@ td > small { display: block; color: #939d97; margin-top: 4px; font-size: 9px; }
   .form-pair { grid-template-columns: 1fr; }
   .registration-form { max-height: none; }
 }
+
+/* Account creation: account-type choice, field errors and notices */
+.account-choices { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.account-choice { display: flex; align-items: center; gap: 11px; min-height: 52px; padding: 11px 12px; border: 1px solid #e2e8e3; border-radius: 9px; cursor: pointer; background: #fff; }
+.account-choice:hover { border-color: #a8c9b8; }
+.account-choice.chosen { border: 2px solid var(--green); background: #f3fbf5; padding: 10px 11px; }
+.account-choice input { width: 18px; height: 18px; margin: 0; accent-color: var(--green); }
+.account-choice:has(input:focus-visible) { outline: 2px solid var(--green); outline-offset: 2px; }
+.account-choice-icon { width: 32px; height: 32px; flex: 0 0 32px; border-radius: 8px; display: grid; place-items: center; color: var(--green); background: #edf6f0; }
+.account-choice b { display: block; color: #1b2b25; font-size: 12px; }
+.account-choice small { display: block; color: #6f7c75; font-size: 10px; margin-top: 2px; }
+.auth-form label > small { color: #6f7c75; font-size: 9px; font-weight: 400; line-height: 1.5; }
+.auth-form label > small.field-error, .registration-form label > small.field-error { color: #a24238; font-weight: 600; }
+.notice-panel { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px; padding: 10px; border: 1px solid #d8eddf; border-radius: 7px; background: #f3fbf5; color: #286e4a; font-size: 10px; line-height: 1.5; }
+.notice-panel svg { flex: 0 0 auto; margin-top: 1px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
