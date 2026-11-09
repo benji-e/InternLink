@@ -160,32 +160,10 @@ def register_student(conn, payload: dict, verification_token: str) -> dict:
 
 
 def verify_student_email(conn, verification_token: str) -> dict:
-    token_hash = hashlib.sha256(verification_token.encode("utf-8")).hexdigest()
-    with conn.cursor(row_factory=dict_row) as cur:
-        token = cur.execute(
-            """
-            SELECT t.token_id, t.user_id, u.role
-            FROM auth_tokens t
-            JOIN users u ON u.user_id = t.user_id
-            WHERE t.token_hash = %s AND t.purpose = 'email_verify'
-              AND t.used_at IS NULL AND t.revoked_at IS NULL
-              AND t.expires_at > now()
-            FOR UPDATE OF t, u
-            """,
-            (token_hash,),
-        ).fetchone()
-        if token is None or token["role"] != "student":
-            raise StudentError(400, "INVALID_VERIFICATION_TOKEN", "This verification link is invalid or expired.")
-        cur.execute("UPDATE auth_tokens SET used_at = now() WHERE token_id = %s", (token["token_id"],))
-        cur.execute(
-            """
-            UPDATE users SET email_verified_at = now(), status = 'active',
-                             failed_login_count = 0, locked_until = NULL
-            WHERE user_id = %s
-            """,
-            (token["user_id"],),
-        )
-    return {"verified": True}
+    """Compatibility name; verification now lives in accounts.verify_account_email."""
+    from .accounts import verify_account_email
+
+    return verify_account_email(conn, verification_token)
 
 
 def authenticate_user(conn, email: str, password: str, expected_role: str | None = None) -> dict:

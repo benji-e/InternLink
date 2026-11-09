@@ -35,6 +35,7 @@ from matching_engine.service import (
     recommend_for_student,
     student_id_for_user,
 )
+from student_module import accounts as account_service
 from student_module import service as student_service
 
 logger = logging.getLogger("internlink.vercel")
@@ -191,6 +192,10 @@ class handler(BaseHTTPRequestHandler):
             "/api/v1/auth/register": ("POST", self._student_register),
             "/api/v1/auth/login": ("POST", self._student_login),
             "/api/v1/auth/verify-email": ("POST", self._student_verify_email),
+            "/api/v1/auth/register-university": ("POST", self._university_register),
+            "/api/v1/auth/resend-verification": ("POST", self._resend_verification),
+            "/api/v1/auth/forgot-password": ("POST", self._forgot_password),
+            "/api/v1/auth/reset-password": ("POST", self._reset_password),
             "/api/v1/admin/registrations": ("GET", self._admin_registrations),
             "/api/v1/admin/users": ("GET", self._admin_users),
             "/api/v1/admin/audit": ("GET", self._admin_audit),
@@ -316,11 +321,20 @@ class handler(BaseHTTPRequestHandler):
             raise student_service.StudentError(401, "UNAUTHENTICATED", "Your session is invalid. Sign in again.") from None
 
     def _student_call(self, callback, *, success_status: int = 200, authenticated: bool = False):
+        result = self._student_run(callback, authenticated=authenticated)
+        if result is not None:
+            self._send_json(success_status, result)
+
+    def _student_run(self, callback, *, authenticated: bool = False):
+        """Run callback(conn, user_id) and return its result.
+
+        On failure the error response is sent here and None is returned.
+        """
+
         try:
             user_id = self._student_user_id() if authenticated else None
             with self._student_connection() as conn:
-                result = callback(conn, user_id)
-            self._send_json(success_status, result)
+                return callback(conn, user_id)
         except student_service.StudentError as exc:
             self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
         except ConfigurationError as exc:
@@ -328,12 +342,13 @@ class handler(BaseHTTPRequestHandler):
         except psycopg.Error as exc:
             if exc.sqlstate == "23505":
                 self._send_json(409, {"error": {"code": "ALREADY_EXISTS", "message": "An account or record with those details already exists."}})
-                return
+                return None
             logger.exception("Student API database request failed")
             self._send_json(503, {"error": {"code": "SERVICE_UNAVAILABLE", "message": "The student service is temporarily unavailable."}})
         except (TimeoutError, OSError):
             logger.exception("Student API dependency request failed")
             self._send_json(503, {"error": {"code": "SERVICE_UNAVAILABLE", "message": "The student service is temporarily unavailable."}})
+        return None
 
     def _student_register(self):
         try:
@@ -341,16 +356,12 @@ class handler(BaseHTTPRequestHandler):
 
             def register(conn, _user_id):
                 token = secrets.token_urlsafe(32)
-                site_url = os.environ.get("INTERNLINK_PUBLIC_BASE_URL")
-                if not site_url:
-                    deployment_url = os.environ.get("VERCEL_URL")
-                    site_url = f"https://{deployment_url}" if deployment_url else "http://localhost:5173"
                 with conn.transaction():
                     account = student_service.register_student(conn, payload, token)
                     self._send_verification_email(
                         payload["email"].strip().lower(),
                         payload.get("full_name", "").strip(),
-                        f"{site_url.rstrip('/')}/verify?token={quote(token)}",
+                        self._verification_url("student", token),
                     )
                 return {
                     "message": "Account created. Check your university email to verify it.",
@@ -362,26 +373,150 @@ class handler(BaseHTTPRequestHandler):
         except student_service.StudentError as exc:
             self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
 
-    @staticmethod
-    def _send_verification_email(email: str, name: str, verification_url: str):
-        api_key = os.environ.get("RESEND_API_KEY")
-        from_email = os.environ.get("INTERNLINK_FROM_EMAIL")
-        if not api_key or not from_email:
-            raise ConfigurationError(
-                "Student registration requires RESEND_API_KEY and INTERNLINK_FROM_EMAIL."
+    def _university_register(self):
+        try:
+            payload = self._read_json_request()
+            self._require_email_configuration()
+
+            def register(conn, _user_id):
+                token = secrets.token_urlsafe(32)
+                with conn.transaction():
+                    account = account_service.register_university(conn, payload, token)
+                    self._send_verification_email(
+                        account["email"], account["full_name"], self._verification_url("coordinator", token)
+                    )
+                return {
+                    "message": (
+                        "Check your email to confirm your address. Your coordinator account becomes "
+                        "active once an administrator verifies your university."
+                    ),
+                    "account_status": "pending_email_verification",
+                    "university_id": account["university_id"],
+                    "user_id": account["user_id"],
+                }
+
+            self._student_call(register, success_status=201)
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+        except ConfigurationError as exc:
+            self._send_json(503, {"error": {"code": "CONFIGURATION_ERROR", "message": str(exc)}})
+
+    def _resend_verification(self):
+        """Always answers the same way so the endpoint can't reveal which emails exist."""
+
+        def issue(conn, payload, raw_token):
+            return account_service.create_email_verification(conn, payload.get("email"), raw_token)
+
+        def send(recipient, raw_token):
+            self._send_verification_email(
+                recipient["email"], recipient["full_name"], self._verification_url(recipient["role"], raw_token)
             )
+
+        self._send_account_link(issue, send)
+
+    def _forgot_password(self):
+        """Always answers the same way so the endpoint can't reveal which emails exist."""
+
+        def issue(conn, payload, raw_token):
+            return account_service.create_password_reset(conn, payload.get("email"), raw_token)
+
+        def send(recipient, raw_token):
+            url = f"{self._site_url()}/reset-password?token={quote(raw_token)}"
+            self._send_email(
+                recipient["email"],
+                "Reset your InternLink password",
+                f"<p>Hello {escape(recipient['full_name'])},</p>"
+                f"<p>Someone asked to reset the password for your InternLink account.</p>"
+                f"<p><a href=\"{escape(url)}\">Choose a new password</a></p>"
+                f"<p>This link expires in {account_service.RESET_MINUTES} minutes. "
+                "If you didn't ask for this, you can ignore this email.</p>",
+            )
+
+        self._send_account_link(issue, send)
+
+    def _send_account_link(self, issue, send):
+        try:
+            payload = self._read_json_request()
+            self._require_email_configuration()
+            raw_token = secrets.token_urlsafe(32)
+
+            def run(conn, _user_id):
+                with conn.transaction():
+                    return {"recipient": issue(conn, payload, raw_token)}
+
+            result = self._student_run(run)
+            if result is None:
+                return  # error already sent
+            recipient = result["recipient"]
+            if recipient is not None:
+                try:
+                    send(recipient, raw_token)
+                except ConfigurationError:
+                    # Already logged; answering differently would reveal the account exists.
+                    pass
+            self._send_json(202, {"message": account_service.GENERIC_EMAIL_MESSAGE})
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+        except ConfigurationError as exc:
+            self._send_json(503, {"error": {"code": "CONFIGURATION_ERROR", "message": str(exc)}})
+
+    def _reset_password(self):
+        try:
+            payload = self._read_json_request()
+
+            def reset(conn, _user_id):
+                with conn.transaction():
+                    result = account_service.reset_password(conn, payload.get("token"), payload.get("password"))
+                message = "Your password has been changed. You can now sign in."
+                if result["awaiting_verification"]:
+                    message = "Your password has been changed. Confirm your email before signing in."
+                return {"message": message, **result}
+
+            self._student_call(reset)
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+
+    @staticmethod
+    def _site_url() -> str:
+        site_url = os.environ.get("INTERNLINK_PUBLIC_BASE_URL")
+        if not site_url:
+            deployment_url = os.environ.get("VERCEL_URL")
+            site_url = f"https://{deployment_url}" if deployment_url else "http://localhost:5173"
+        return site_url.rstrip("/")
+
+    @classmethod
+    def _verification_url(cls, role: str, raw_token: str) -> str:
+        # Employer links are checked by the employer module at /verify-email.
+        path = "verify-email" if role == "employer" else "verify"
+        return f"{cls._site_url()}/{path}?token={quote(raw_token)}"
+
+    @staticmethod
+    def _require_email_configuration():
+        if not os.environ.get("RESEND_API_KEY") or not os.environ.get("INTERNLINK_FROM_EMAIL"):
+            raise ConfigurationError("Sending email requires RESEND_API_KEY and INTERNLINK_FROM_EMAIL.")
+
+    @classmethod
+    def _send_verification_email(cls, email: str, name: str, verification_url: str):
+        cls._send_email(
+            email,
+            "Confirm your InternLink email address",
+            f"<p>Hello {escape(name)},</p><p>Confirm your email address to activate your "
+            f"InternLink account:</p><p><a href=\"{escape(verification_url)}\">Confirm email</a></p>"
+            "<p>This link expires in 24 hours. If you did not create this account, ignore this email.</p>",
+        )
+
+    @classmethod
+    def _send_email(cls, email: str, subject: str, html: str):
+        cls._require_email_configuration()
         data = json.dumps(
             {
-                "from": from_email,
+                "from": os.environ["INTERNLINK_FROM_EMAIL"],
                 "to": [email],
-                "subject": "Verify your InternLink student account",
-                "html": (
-                    f"<p>Hello {escape(name)},</p><p>Verify your university email to activate your "
-                    f"InternLink student account:</p><p><a href=\"{verification_url}\">Verify email</a></p>"
-                    "<p>This link expires in 24 hours. If you did not create this account, ignore this email.</p>"
-                ),
+                "subject": subject,
+                "html": html,
             }
         ).encode("utf-8")
+        api_key = os.environ["RESEND_API_KEY"]
         request = URLRequest(
             "https://api.resend.com/emails",
             data=data,
@@ -396,8 +531,8 @@ class handler(BaseHTTPRequestHandler):
                 if response.status >= 300:
                     raise RuntimeError(f"Email provider returned HTTP {response.status}")
         except (HTTPError, URLError, TimeoutError, OSError, RuntimeError) as exc:
-            logger.exception("Could not send student email verification")
-            raise ConfigurationError("Could not send the verification email. Please try again later.") from exc
+            logger.exception("Could not send an account email")
+            raise ConfigurationError("Could not send the email. Please try again later.") from exc
 
     def _student_login(self):
         try:
@@ -549,6 +684,8 @@ class handler(BaseHTTPRequestHandler):
                 )
                 if cursor.rowcount != 1:
                     raise student_service.StudentError(404, "REGISTRATION_NOT_FOUND", "That registration is no longer pending.")
+                if org_type == "university" and state == "verified":
+                    account_service.activate_university_coordinators(conn, org_id)
             return {"status": state}
 
         self._role_call(decide, {"admin"})
@@ -701,7 +838,7 @@ class handler(BaseHTTPRequestHandler):
 
             def verify(conn, _user_id):
                 with conn.transaction():
-                    return student_service.verify_student_email(conn, token.strip())
+                    return account_service.verify_account_email(conn, token.strip())
 
             self._student_call(verify)
         except student_service.StudentError as exc:

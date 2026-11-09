@@ -3,11 +3,14 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 export class ApiError extends Error {
   status: number
   code: string
+  /** Per-field messages, e.g. { rep_email: 'Required' }, when the server sends them. */
+  fields: Record<string, string>
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, fields: Record<string, string> = {}) {
     super(message)
     this.status = status
     this.code = code
+    this.fields = fields
   }
 }
 
@@ -41,10 +44,12 @@ export async function apiRequest<T>(
   if (!response.ok) {
     const error = payload.error as { code?: string; message?: string } | undefined
     const detail = typeof payload.detail === 'string' ? payload.detail : undefined
+    const fields = payload.fields && typeof payload.fields === 'object' ? payload.fields as Record<string, string> : {}
     throw new ApiError(
       response.status,
       error?.code ?? 'REQUEST_FAILED',
       error?.message ?? detail ?? (typeof payload.message === 'string' ? payload.message : undefined) ?? 'The request could not be completed.',
+      fields,
     )
   }
   return payload as T
@@ -63,6 +68,33 @@ export async function employerRequest<T>(action: string, token: string, payload:
   return result.data
 }
 
+/** Employer registration and email confirmation need no sign-in. */
+export async function employerPublicRequest<T>(action: 'register' | 'verify_email', payload: Record<string, unknown>) {
+  const result = await apiRequest<{ ok: boolean; data: T }>(
+    `/api/employer/${action === 'verify_email' ? 'verify-email' : action}`,
+    { method: 'POST', body: JSON.stringify(payload) },
+  )
+  return result.data
+}
+
+const postJson = <T,>(path: string, body: Record<string, unknown>) =>
+  apiRequest<T>(path, { method: 'POST', body: JSON.stringify(body) })
+
+export const accountApi = {
+  registerEmployer: (input: Record<string, unknown>) =>
+    employerPublicRequest<{ company_id: number; message: string }>('register', input),
+  verifyEmployerEmail: (token: string) =>
+    employerPublicRequest<{ message: string }>('verify_email', { token }),
+  registerUniversity: (input: Record<string, unknown>) =>
+    postJson<{ message: string }>('/api/v1/auth/register-university', input),
+  resendVerification: (email: string) =>
+    postJson<{ message: string }>('/api/v1/auth/resend-verification', { email }),
+  forgotPassword: (email: string) =>
+    postJson<{ message: string }>('/api/v1/auth/forgot-password', { email }),
+  resetPassword: (token: string, password: string) =>
+    postJson<{ message: string }>('/api/v1/auth/reset-password', { token, password }),
+}
+
 export const studentApi = {
   login: (email: string, password: string) =>
     apiRequest<{ access_token: string; user: AuthUser }>(
@@ -75,7 +107,7 @@ export const studentApi = {
       body: JSON.stringify(input),
     }),
   verifyEmail: (token: string) =>
-    apiRequest<{ verified: boolean }>('/api/v1/auth/verify-email', {
+    apiRequest<{ verified: boolean; role: string; awaiting_review: boolean }>('/api/v1/auth/verify-email', {
       method: 'POST',
       body: JSON.stringify({ token }),
     }),

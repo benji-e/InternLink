@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import {
-  ArrowDownUp, ArrowLeft, ArrowRight, Bell, BriefcaseBusiness,
+  ArrowDownUp, ArrowRight, Bell, BriefcaseBusiness,
   Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Clock3, FileText,
   Filter, GraduationCap, LayoutDashboard, LogOut, MapPin, Menu, Search,
   ShieldCheck, SlidersHorizontal, Sparkles, Users, X,
 } from 'lucide-react'
-import { ApiError, employerRequest, roleApi, studentApi, type AuthUser, type CatalogItem, type University } from './api'
+import { ApiError, employerRequest, roleApi, studentApi, type AuthUser, type CatalogItem } from './api'
+import { AuthGate, isAuthLinkPath } from './AuthPages'
+import { BrandMark } from './BrandMark'
 import type { Application, Opportunity, Page, Role, StudentProfile } from './types'
 import './App.css'
 
@@ -124,7 +126,8 @@ function mapProfile(row: Record<string, unknown>): StudentProfile {
 }
 
 function App() {
-  const restoredSession = useMemo(readSession, [])
+  // Links from our emails (confirm, reset password) open the sign-in screens even if signed in.
+  const restoredSession = useMemo(() => (isAuthLinkPath() ? null : readSession()), [])
   const [role, setRole] = useState<Role | null>(restoredSession?.user.role ?? null)
   const [page, setPage] = useState<Page>('dashboard')
   const [session, setSession] = useState<LiveSession | null>(restoredSession)
@@ -163,16 +166,6 @@ function App() {
     const timer = window.setTimeout(() => setToast(''), 3600)
     return () => window.clearTimeout(timer)
   }, [toast])
-
-  useEffect(() => {
-    const verifyToken = new URLSearchParams(window.location.search).get('token')
-    if (window.location.pathname === '/verify' && verifyToken) {
-      studentApi.verifyEmail(verifyToken)
-        .then(() => setToast('Email verified. You can now sign in.'))
-        .catch((error: unknown) => setToast(messageFrom(error)))
-      window.history.replaceState({}, '', '/')
-    }
-  }, [])
 
   useEffect(() => {
     if (!session) return
@@ -525,16 +518,6 @@ function App() {
   )
 }
 
-function BrandMark() {
-  return (
-    <div className="brand-lockup">
-      <span className="brand-icon"><span /><span /><span /></span>
-      <span className="brand-name">intern<span>link</span></span>
-      <span className="brand-region">UGANDA</span>
-    </div>
-  )
-}
-
 function LiveRoleWorkspace({
   role,
   page,
@@ -868,159 +851,6 @@ function EmployerMessages({
 
 function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase()
-}
-
-function AuthGate({ onLogin, toast }: { onLogin: (session: LiveSession) => void; toast: string }) {
-  const [registering, setRegistering] = useState(false)
-  return (
-    <div className="auth-page">
-      <header className="auth-topbar"><BrandMark /><span className="auth-top-note">Your next opportunity starts here</span></header>
-      <main className="auth-layout">
-        <section className="auth-story">
-          <span className="eyebrow"><span className="eyebrow-dot" /> INTERNSHIPS. OPPORTUNITY. GROWTH.</span>
-          <h1>Make your next move<br /><em>count.</em></h1>
-          <p>One trusted place to find internships, connect with employers and turn your education into experience.</p>
-          <div className="story-points">
-            <div><span className="story-check"><Check size={15} /></span><span><b>Made for you</b><small>Personalised internship recommendations</small></span></div>
-            <div><span className="story-check"><Check size={15} /></span><span><b>Every step, in view</b><small>Track every application in one place</small></span></div>
-            <div><span className="story-check"><Check size={15} /></span><span><b>Trusted connections</b><small>Verified employers and universities</small></span></div>
-          </div>
-          <div className="auth-story-foot"><ShieldCheck size={16} /> A safer bridge between campus and career.</div>
-        </section>
-        <section className="auth-card">
-          {registering
-            ? <RegistrationForm onBack={() => setRegistering(false)} />
-            : <LoginForm onRegister={() => setRegistering(true)} onLogin={onLogin} />}
-          {toast && <div className="auth-message"><CircleHelp size={16} />{toast}</div>}
-        </section>
-      </main>
-      <footer className="auth-footer">
-        <span>© 2026 InternLink Uganda</span>
-        <span>Secure sign-in for students, employers, coordinators and administrators</span>
-      </footer>
-    </div>
-  )
-}
-
-function LoginForm({ onRegister, onLogin }: { onRegister: () => void; onLogin: (session: LiveSession) => void }) {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    setError('')
-    setBusy(true)
-    try {
-      const response = await studentApi.login(email, password)
-      onLogin({ token: response.access_token, user: response.user })
-    } catch (reason) {
-      setError(messageFrom(reason))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <>
-      <div className="auth-card-heading"><span className="auth-icon"><GraduationCap size={20} /></span><span className="tiny-label">INTERNLINK PORTAL</span></div>
-      <h2>Welcome back</h2>
-      <p className="auth-subtitle">Sign in to continue to your InternLink workspace.</p>
-      <form className="auth-form" onSubmit={(event) => void submit(event)}>
-        <label>Email address<input type="email" autoComplete="email" placeholder="you@university.ac.ug" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-        <label>Password<input type="password" autoComplete="current-password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-        <div className="auth-form-row"><span>Use your registered email address</span><button type="button" className="text-button" onClick={() => setError('Password reset is not configured yet. Contact your administrator.')}>Forgot password?</button></div>
-        {error && <div className="form-error">{error}</div>}
-        <button className="button button-primary full-button" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'} <ArrowRight size={16} /></button>
-      </form>
-      <div className="auth-register-line">Student? <button onClick={onRegister}>Create a student account</button></div>
-    </>
-  )
-}
-
-function RegistrationForm({ onBack }: { onBack: () => void }) {
-  const [universities, setUniversities] = useState<University[]>([])
-  const [departments, setDepartments] = useState<CatalogItem[]>([])
-  const [programmes, setProgrammes] = useState<CatalogItem[]>([])
-  const [values, setValues] = useState({ full_name: '', email: '', password: '', student_number: '', university_id: '', department_id: '', programme_id: '', year_of_study: '1' })
-  const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    studentApi.universities()
-      .then((result) => setUniversities(result.universities))
-      .catch((reason: unknown) => setError(messageFrom(reason)))
-  }, [])
-  useEffect(() => {
-    if (!values.university_id) { setDepartments([]); return }
-    studentApi.departments(Number(values.university_id))
-      .then((result) => setDepartments(result.departments))
-      .catch((reason: unknown) => setError(messageFrom(reason)))
-  }, [values.university_id])
-  useEffect(() => {
-    if (!values.department_id) { setProgrammes([]); return }
-    studentApi.programmes(Number(values.department_id))
-      .then((result) => setProgrammes(result.programmes))
-      .catch((reason: unknown) => setError(messageFrom(reason)))
-  }, [values.department_id])
-
-  function update(name: keyof typeof values, value: string) {
-    setValues((current) => ({
-      ...current,
-      [name]: value,
-      ...(name === 'university_id' ? { department_id: '', programme_id: '' } : {}),
-      ...(name === 'department_id' ? { programme_id: '' } : {}),
-    }))
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    setBusy(true)
-    setError('')
-    setMessage('')
-    try {
-      const result = await studentApi.register({
-        ...values,
-        university_id: Number(values.university_id),
-        department_id: Number(values.department_id),
-        programme_id: Number(values.programme_id),
-        year_of_study: Number(values.year_of_study),
-      })
-      setMessage(result.message)
-    } catch (reason) {
-      setError(messageFrom(reason))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <>
-      <button className="back-link" onClick={onBack}><ArrowLeft size={15} /> Back to sign in</button>
-      <div className="auth-card-heading"><span className="auth-icon"><GraduationCap size={20} /></span><span className="tiny-label">STUDENT REGISTRATION</span></div>
-      <h2>Create your account</h2>
-      <p className="auth-subtitle">Register with your university email to get started.</p>
-      {message
-        ? <div className="success-panel"><CheckCircle2 size={22} /><strong>Check your inbox</strong><p>{message}</p><button className="button button-secondary" onClick={onBack}>Return to sign in</button></div>
-        : <form className="auth-form registration-form" onSubmit={(event) => void submit(event)}>
-          <label>Full name<input value={values.full_name} onChange={(event) => update('full_name', event.target.value)} required /></label>
-          <label>University email<input type="email" placeholder="name@university.ac.ug" value={values.email} onChange={(event) => update('email', event.target.value)} required /></label>
-          <label>Student number<input value={values.student_number} onChange={(event) => update('student_number', event.target.value)} required /></label>
-          <label>University<select value={values.university_id} onChange={(event) => update('university_id', event.target.value)} required><option value="">Select university</option>{universities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <div className="form-pair">
-            <label>Department<select value={values.department_id} onChange={(event) => update('department_id', event.target.value)} required disabled={!departments.length}><option value="">Select department</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label>Programme<select value={values.programme_id} onChange={(event) => update('programme_id', event.target.value)} required disabled={!programmes.length}><option value="">Select programme</option>{programmes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          </div>
-          <label>Year of study<select value={values.year_of_study} onChange={(event) => update('year_of_study', event.target.value)}>{[1, 2, 3, 4, 5, 6].map((year) => <option key={year} value={year}>Year {year}</option>)}</select></label>
-          <label>Password<input type="password" autoComplete="new-password" minLength={10} value={values.password} onChange={(event) => update('password', event.target.value)} required /><small>Use at least 10 characters.</small></label>
-          {error && <div className="form-error">{error}</div>}
-          <button className="button button-primary full-button" disabled={busy || !universities.length}>{busy ? 'Creating account…' : 'Create account'} <ArrowRight size={16} /></button>
-          {!universities.length && !error && <small className="helper-text">University options load from the configured InternLink API.</small>}
-        </form>}
-    </>
-  )
 }
 
 function StudentWorkspace(props: {
