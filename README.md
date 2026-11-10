@@ -65,6 +65,7 @@ Run the schema scripts against the new database, in this order:
 5. `08_university_requests.sql` (students asking for a university that isn't listed yet)
 6. `09_interviews_saved.sql` (interview stage, decline reasons, saved internships)
 7. `10_cv_alerts_invites.sql` (CV uploads, job alerts, coordinator invites)
+8. `11_companies_logos.sql` (company logos, "suggest a company")
 
 Job alerts run once a day through a Vercel cron job (`vercel.json`), which calls
 `/api/cron/job-alerts`. Set a `CRON_SECRET` environment variable in Vercel
@@ -201,6 +202,13 @@ coordinator and administrator accounts.
 - `GET`, `POST /api/v1/students/me/alerts` (`{"filters": {...}}` with the search page's
   `q`, `location`, `sector`, `remote`, `duration`, `my_programme`) and
   `DELETE /api/v1/students/me/alerts/{id}`
+- `GET /api/v1/public/companies` with `q`, `sector` and `page`: verified companies, including
+  those with no open internships; `GET /api/v1/public/companies/{id}` for one company and its
+  open internships; `GET /api/v1/public/companies/{id}/logo` for its logo image
+- `POST /api/v1/public/company-requests` with `company_name`, optional `website` and
+  `requester_email`: a student suggests a company that isn't on InternLink
+- `GET`, `PUT`, `DELETE /api/v1/employer/logo` (employer token; `PUT` sends the image itself,
+  PNG, JPEG or WebP up to 1 MB) and `GET /api/v1/employer/logo/file` to preview it
 - `GET /api/v1/auth/invite?token=` and `POST /api/v1/auth/accept-invite` with `token`,
   `full_name` and `password`: the page a coordinator invite email links to
 - `GET`, `POST /api/v1/students/me/applications/{id}/messages`: read the employer's
@@ -215,6 +223,8 @@ coordinator and administrator accounts.
 - `GET /api/v1/admin/registrations/{company|university}/{id}`: details for review
 - `POST /api/v1/admin/registrations/{company|university}/{id}`
 - `GET /api/v1/admin/universities`: verified universities with coordinator counts
+- `GET /api/v1/admin/company-requests`; `POST` with `company_name` and `status`
+  (`invited` or `declined`) closes the open suggestions for that company
 - `GET /api/v1/admin/universities/{id}/coordinators`; `POST` with `email` and optional
   `department_id` invites a coordinator by email
 - `GET /api/v1/admin/university-requests`; `POST` with `university_name` and

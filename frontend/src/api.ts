@@ -244,6 +244,8 @@ export type ListingSummary = {
   required_skills: string[]
   application_status?: string | null
   saved?: boolean
+  company_id: number
+  has_logo: boolean
 }
 
 export type MatchDetail = {
@@ -317,6 +319,7 @@ export const messageApi = {
 export type SavedItem = {
   listing_id: number; title: string; company_name: string; sector: string; location: string; is_remote: boolean
   duration_weeks: number; application_deadline: string; saved_at: string; is_open: boolean; application_status: string | null
+  company_id: number; has_logo: boolean
 }
 
 export const savedApi = {
@@ -408,6 +411,56 @@ export const cvApi = {
     link.click()
     URL.revokeObjectURL(link.href)
   },
+}
+
+export type CompanySummary = {
+  company_id: number; name: string; sector: string; location: string; description: string | null
+  has_logo: boolean; open_internships: number
+}
+export type CompanyPage = Omit<CompanySummary, 'open_internships'> & {
+  website: string | null; past_internships: number; interns_placed: number
+  open_internships: ListingSummary[]
+}
+
+/** Public URL of a verified company's logo (only meaningful when has_logo is true). */
+export const companyLogoUrl = (companyId: number) => `${API_BASE}/api/v1/public/companies/${companyId}/logo`
+
+export const companyApi = {
+  list: (query: URLSearchParams) =>
+    apiRequest<{ companies: CompanySummary[]; count: number; page: number; page_size: number; sectors: { name: string; count: number }[] }>(
+      `/api/v1/public/companies?${query.toString()}`,
+    ),
+  page: (companyId: number) => apiRequest<{ company: CompanyPage }>(`/api/v1/public/companies/${companyId}`),
+  suggest: (input: { company_name: string; website?: string; requester_email: string }) =>
+    postJson<{ message: string }>('/api/v1/public/company-requests', input),
+}
+
+export type LogoInfo = { content_type: string; size_bytes: number; updated_at: string }
+export const MAX_LOGO_BYTES = 1024 * 1024
+
+/** The signed-in employer's own company logo. */
+export const employerLogoApi = {
+  info: (token: string) => apiRequest<{ logo: LogoInfo | null }>('/api/v1/employer/logo', {}, token),
+  upload: (token: string, file: File) =>
+    apiRequest<{ logo: LogoInfo }>('/api/v1/employer/logo', {
+      method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    }, token),
+  remove: (token: string) => apiRequest<{ logo: null }>('/api/v1/employer/logo', { method: 'DELETE' }, token),
+  /** An object URL for previewing the logo, even before the company is verified. */
+  preview: async (token: string) => {
+    const response = await fetch(`${API_BASE}/api/v1/employer/logo/file`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!response.ok) return null
+    return URL.createObjectURL(await response.blob())
+  },
+}
+
+export type CompanyRequest = { company_name: string; requests: number; websites: string[]; last_requested_at: string }
+export const companyRequestApi = {
+  list: (token: string) => apiRequest<{ requests: CompanyRequest[] }>('/api/v1/admin/company-requests', {}, token),
+  close: (token: string, companyName: string, status: 'invited' | 'declined') =>
+    apiRequest<{ updated: number }>('/api/v1/admin/company-requests', {
+      method: 'POST', body: JSON.stringify({ company_name: companyName, status }),
+    }, token),
 }
 
 export type JobAlert = { alert_id: number; filters: Record<string, string>; label: string; created_at: string; last_sent_at: string | null }

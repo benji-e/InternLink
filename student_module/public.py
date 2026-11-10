@@ -18,9 +18,10 @@ SORTS = {
 MATCH_WEIGHTS = {"skills": 40, "programme": 35, "interests": 15, "location": 10}
 
 LISTING_COLUMNS = """
-    v.listing_id, v.title, v.company_name, v.sector, v.location, v.is_remote,
+    v.listing_id, v.title, v.company_id, v.company_name, v.sector, v.location, v.is_remote,
     v.duration_weeks, v.slots_remaining, v.application_deadline, v.posted_at,
-    v.required_skills
+    v.required_skills,
+    EXISTS (SELECT 1 FROM company_logos cl WHERE cl.company_id = v.company_id) AS has_logo
 """
 
 
@@ -178,7 +179,8 @@ def opportunity_detail(conn, listing_id: int, student_id: int | None = None) -> 
                    v.required_skills, v.accepted_programmes,
                    (v.application_deadline - CURRENT_DATE) AS days_left,
                    c.company_id, c.name AS company_name, c.description AS company_description,
-                   c.location AS company_location, c.website AS company_website
+                   c.location AS company_location, c.website AS company_website,
+                   EXISTS (SELECT 1 FROM company_logos cl WHERE cl.company_id = c.company_id) AS has_logo
             FROM v_open_listings v JOIN companies c ON c.company_id = v.company_id
             WHERE v.listing_id = %s
             """,

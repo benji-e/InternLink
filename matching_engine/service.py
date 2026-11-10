@@ -37,6 +37,8 @@ class Recommendation:
     location: str | None = None
     is_remote: bool = False
     duration_weeks: int | None = None
+    company_id: int | None = None
+    has_logo: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,7 +66,8 @@ def student_id_for_user(conn, user_id: int) -> int | None:
 RECOMMEND_SQL = """
     SELECT r.rank, r.listing_id, r.score, r.p, r.s, r.i, r.l, r.applied,
            l.title, c.name AS company, l.application_deadline AS deadline,
-           l.location, l.is_remote, l.duration_weeks,
+           l.location, l.is_remote, l.duration_weeks, c.company_id,
+           EXISTS (SELECT 1 FROM company_logos cl WHERE cl.company_id = c.company_id) AS has_logo,
            COALESCE(array_agg(sk.name ORDER BY sk.name) FILTER (WHERE ss.skill_id IS NOT NULL), '{}') AS matched,
            COALESCE(array_agg(sk.name ORDER BY sk.name)
                     FILTER (WHERE sk.skill_id IS NOT NULL AND ss.skill_id IS NULL), '{}') AS missing
@@ -75,7 +78,7 @@ RECOMMEND_SQL = """
     LEFT JOIN skills sk ON sk.skill_id = ls.skill_id
     LEFT JOIN student_skills ss ON ss.skill_id = ls.skill_id AND ss.student_id = %(sid)s
     GROUP BY r.rank, r.listing_id, r.score, r.p, r.s, r.i, r.l, r.applied, l.title, c.name, l.application_deadline,
-             l.location, l.is_remote, l.duration_weeks
+             l.location, l.is_remote, l.duration_weeks, c.company_id
     ORDER BY r.rank"""
 
 
@@ -100,6 +103,8 @@ def _to_recommendation(row) -> Recommendation:
         location=row.get("location"),
         is_remote=bool(row.get("is_remote", False)),
         duration_weeks=row.get("duration_weeks"),
+        company_id=row.get("company_id"),
+        has_logo=bool(row.get("has_logo", False)),
     )
 
 

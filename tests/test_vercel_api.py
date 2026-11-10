@@ -144,7 +144,8 @@ class VercelEntryPointTests(ServerTestCase):
             headers={"Content-Length": str(5 * 1024 * 1024), "Content-Type": "application/pdf"},
         )
         self.assertEqual(status, 413)
-        self.assertEqual(json.loads(body)["error"]["code"], "CV_TOO_LARGE")
+        self.assertEqual(json.loads(body)["error"]["code"], "FILE_TOO_LARGE")
+        self.assertIn("4 MB", json.loads(body)["error"]["message"])
 
     def test_unknown_route_returns_not_found(self):
         status, _, body = self.request("/not-an-api-route")
