@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from ..constants import (
     ACTION_TO_STATUS,
     APPLICATION_STATUSES,
     EMPLOYER_APP_TRANSITIONS,
     PAGE_SIZE,
     SORT_WHITELIST,
+    MAX_DECISION_NOTE_LEN,
+    MESSAGING_STATUSES,
 )
 from ..errors import ModuleError, RULE_MAP
 from ..session import Session
@@ -29,6 +33,7 @@ from .common import (
 DECISION_MESSAGES = {
     "under_review": ("Application under review", "Your application is now under review."),
     "shortlisted": ("Application shortlisted", "You have been shortlisted for an internship."),
+    "interview": ("Interview invitation", "You have been invited to an interview."),
     "accepted": ("Application accepted", "You have been accepted for an internship placement."),
     "rejected": ("Application update", "Your application was not successful this time."),
 }
@@ -60,7 +65,7 @@ def list_applicants(
         f"""
         SELECT application_id, student_id, applicant_name, programme, year_of_study,
                university, match_score, status, submitted_at,
-               (cv_path IS NOT NULL) AS has_cv
+               (cv_path IS NOT NULL) AS has_cv, student_verified, interview_at
         FROM v_employer_applicants
         WHERE company_id = %s AND listing_id = %s AND (CAST(%s AS TEXT) IS NULL OR status = %s)
         ORDER BY CASE WHEN {column} IS NULL THEN 1 ELSE 0 END,
@@ -78,6 +83,7 @@ def list_applicants(
     )
     for row in rows:
         row["has_cv"] = bool(row["has_cv"])
+        row["student_verified"] = bool(row["student_verified"])
 
     counts = db.query_all(
         """
@@ -100,7 +106,8 @@ def view_applicant(db, session: Session, application_id: int) -> dict:
     profile = db.query_one(
         """
         SELECT u.full_name, pr.name AS programme, sp.year_of_study,
-               un.name AS university, sp.preferred_location, sp.willing_to_relocate
+               un.name AS university, sp.preferred_location, sp.willing_to_relocate,
+               (sp.cv_path IS NOT NULL) AS has_cv
         FROM student_profiles sp
         JOIN users u ON u.user_id = sp.user_id
         JOIN programmes pr ON pr.programme_id = sp.programme_id
@@ -127,6 +134,7 @@ def view_applicant(db, session: Session, application_id: int) -> dict:
         [application["student_id"]],
     )
     profile["willing_to_relocate"] = bool(profile["willing_to_relocate"])
+    has_cv = bool(profile.pop("has_cv"))
 
     status = application["status"]
     if status == "submitted":
@@ -157,12 +165,32 @@ def view_applicant(db, session: Session, application_id: int) -> dict:
             )
             status = current["status"] if current else status
 
+    # The listing's skills, marked with whether this candidate has each one.
+    student_skills = {row["name"] for row in profile["skills"]}
+    listing_skills = db.query_all(
+        """
+        SELECT s.name, ls.is_required FROM listing_skills ls JOIN skills s ON s.skill_id = ls.skill_id
+        WHERE ls.listing_id = %s ORDER BY ls.is_required DESC, s.name
+        """,
+        [application["listing_id"]],
+    )
     return {
         "profile": profile,
+        "application_id": int(application["application_id"]),
+        "listing_id": int(application["listing_id"]),
+        "listing_title": application["title"],
+        "submitted_at": application["submitted_at"],
         "cover_note": application["cover_note"],
         "match_score": application["match_score"],
         "status": status,
-        "can_message": status in ("shortlisted", "accepted"),
+        "has_cv": has_cv,
+        "interview_at": application.get("interview_at"),
+        "interview_note": application.get("interview_note"),
+        "listing_skills": [
+            {"name": row["name"], "required": bool(row["is_required"]), "has": row["name"] in student_skills}
+            for row in listing_skills
+        ],
+        "can_message": status in MESSAGING_STATUSES,
     }
 
 
@@ -195,14 +223,61 @@ def download_applicant_cv(db, session: Session, storage, application_id: int) ->
     return content
 
 
-def decide_application(db, session: Session, application_id: int, action: str) -> dict:
-    """Move one application through the employer-side state machine (SR04)."""
+def _interview_time(value) -> datetime:
+    """An ISO date-time in the future, returned as an aware UTC datetime.
+
+    Unlike decided_at, this is shown to people, so it keeps its time zone:
+    a naive value would be read in the database server's own zone.
+    """
+
+    if not isinstance(value, str) or not value.strip():
+        raise ModuleError("invalid", "Choose the interview date and time.", {"interview_at": "Required"})
+    try:
+        moment = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise ModuleError("invalid", "Choose a valid interview date and time.", {"interview_at": "Invalid"}) from None
+    # A time without a zone is taken as UTC.
+    moment = moment.replace(tzinfo=timezone.utc) if moment.tzinfo is None else moment.astimezone(timezone.utc)
+    if moment <= datetime.now(timezone.utc):
+        raise ModuleError("invalid", "The interview must be in the future.", {"interview_at": "Past"})
+    return moment
+
+
+def _short_note(value, label: str) -> str | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str) or len(value.strip()) > MAX_DECISION_NOTE_LEN:
+        raise ModuleError("invalid", f"{label} must be at most {MAX_DECISION_NOTE_LEN} characters.")
+    return value.strip() or None
+
+
+def decide_application(
+    db,
+    session: Session,
+    application_id: int,
+    action: str,
+    *,
+    interview_at=None,
+    interview_note=None,
+    reason=None,
+) -> dict:
+    """Move one application through the employer-side state machine (SR04).
+
+    An interview needs a future date and time. A rejection can carry a short
+    reason that is shared with the student.
+    """
 
     if not isinstance(action, str):
         raise ModuleError("invalid", "Unknown action.")
     target = ACTION_TO_STATUS.get(action)
     if target is None:
         raise ModuleError("invalid", "Unknown action.")
+    extra: dict = {}
+    if target == "interview":
+        extra["interview_at"] = _interview_time(interview_at)
+        extra["interview_note"] = _short_note(interview_note, "Interview details")
+    if target == "rejected":
+        extra["decision_note"] = _short_note(reason, "The reason")
     application = own_application(db, session, application_id)
     current_status = application["status"]
     if target not in EMPLOYER_APP_TRANSITIONS.get(current_status, set()):
@@ -223,12 +298,14 @@ def decide_application(db, session: Session, application_id: int, action: str) -
                 raise ModuleError("conflict", "All slots of this listing are filled.")
 
         # Conditional update protects against a concurrent decision by a teammate.
+        # Column names come from the fixed `extra` keys above, never from input.
+        assignments = "".join(f", {column} = %s" for column in extra)
         changed = db.execute(
-            """
-            UPDATE applications SET status = %s, decided_at = %s
+            f"""
+            UPDATE applications SET status = %s, decided_at = %s{assignments}
             WHERE application_id = %s AND status = %s
             """,
-            [target, utcnow(), application_id, current_status],
+            [target, utcnow(), *extra.values(), application_id, current_status],
         )
         if changed != 1:
             raise ModuleError(
@@ -253,6 +330,10 @@ def decide_application(db, session: Session, application_id: int, action: str) -
         recipient = student_user_id(db, application["student_id"])
         if recipient is not None:
             title, message = DECISION_MESSAGES[target]
+            if target == "interview":
+                message = f"{message} When: {extra['interview_at']:%d %b %Y, %H:%M} UTC."
+            if extra.get("decision_note"):
+                message = f"{message} Reason: {extra['decision_note']}"
             notify_user(
                 db,
                 recipient,

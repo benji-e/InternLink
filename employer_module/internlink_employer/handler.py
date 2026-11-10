@@ -74,7 +74,13 @@ ACTIONS = {
         ctx.db, ctx.session, ctx.storage, _required(p, "application_id")
     ),
     "decide": lambda ctx, p: decide_application(
-        ctx.db, ctx.session, _required(p, "application_id"), _required(p, "action")
+        ctx.db,
+        ctx.session,
+        _required(p, "application_id"),
+        _required(p, "action"),
+        interview_at=p.get("interview_at"),
+        interview_note=p.get("interview_note"),
+        reason=p.get("reason"),
     ),
     "bulk_decide": lambda ctx, p: bulk_decide(
         ctx.db, ctx.session, _required(p, "ids"), _required(p, "action")

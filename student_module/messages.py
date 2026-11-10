@@ -12,7 +12,7 @@ from psycopg.rows import dict_row
 from .service import StudentError
 
 MAX_MESSAGE_LENGTH = 5000
-OPEN_STATUSES = ("shortlisted", "accepted")
+OPEN_STATUSES = ("shortlisted", "interview", "accepted")
 
 
 def _application(cur, student_id: int, application_id: int) -> dict:

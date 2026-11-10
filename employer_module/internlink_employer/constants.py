@@ -9,14 +9,18 @@ SLOTS_RANGE = (1, 500)          # listings.slots
 WEEKS_RANGE = (1, 52)           # listings.duration_weeks
 
 LISTING_STATUSES = {"draft", "open", "closed", "hidden"}
-APPLICATION_STATUSES = {"submitted", "under_review", "shortlisted", "accepted", "rejected"}
+APPLICATION_STATUSES = {"submitted", "under_review", "shortlisted", "interview", "accepted", "rejected"}
+# Statuses where the employer and candidate can message each other (SR10).
+MESSAGING_STATUSES = ("shortlisted", "interview", "accepted")
+MAX_DECISION_NOTE_LEN = 500
 PLACEMENT_STATUSES = {"pending", "confirmed", "completed"}
 
 # SR04 - transitions the employer is allowed to make.
 EMPLOYER_APP_TRANSITIONS = {
     "submitted": {"under_review", "shortlisted", "rejected"},
     "under_review": {"shortlisted", "rejected"},
-    "shortlisted": {"accepted", "rejected"},
+    "shortlisted": {"interview", "accepted", "rejected"},
+    "interview": {"accepted", "rejected"},
 }
 
 LISTING_TRANSITIONS = {
@@ -38,6 +42,7 @@ ACTION_TO_STATUS = {
     "shortlist": "shortlisted",
     "reject": "rejected",
     "accept": "accepted",
+    "interview": "interview",
     "under_review": "under_review",
 }
 

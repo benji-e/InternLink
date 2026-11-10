@@ -441,6 +441,7 @@ def list_applications(conn, student_id: int) -> list[dict]:
             """
             SELECT a.application_id, a.listing_id, a.status, a.match_score,
                    a.cover_note, a.submitted_at, a.status_changed_at,
+                   a.interview_at, a.interview_note, a.decision_note,
                    l.title, l.location, l.application_deadline,
                    c.name AS company_name, p.status AS placement_status
             FROM applications a
@@ -506,7 +507,7 @@ def withdraw_application(conn, student_id: int, application_id: int) -> dict:
             UPDATE applications
             SET status = 'withdrawn'
             WHERE application_id = %s AND student_id = %s
-              AND status IN ('submitted', 'under_review', 'shortlisted', 'accepted')
+              AND status IN ('submitted', 'under_review', 'shortlisted', 'interview', 'accepted')
             RETURNING application_id, status
             """,
             (application_id, student_id),

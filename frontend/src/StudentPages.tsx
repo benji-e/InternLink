@@ -1,26 +1,49 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Check } from 'lucide-react'
-import { messageApi, type MessageThread } from './api'
-import { initialsOf, messageOf, shortDate, Wordmark } from './PublicSite'
+import { messageApi, savedApi, type MessageThread, type SavedItem } from './api'
+import { initialsOf, messageOf, SaveButton, shortDate, Wordmark, type SiteSession } from './PublicSite'
 import { linkTo, navigate } from './router'
 import type { Application, Opportunity, StudentProfile } from './types'
 import './site.css'
 
-export type StudentPage = 'home' | 'applications' | 'notifications' | 'profile'
+export type StudentPage = 'home' | 'saved' | 'applications' | 'notifications' | 'profile'
 
 const STEPS = [
   { key: 'submitted', label: 'Sent' },
   { key: 'under_review', label: 'Viewed' },
   { key: 'shortlisted', label: 'Shortlisted' },
+  { key: 'interview', label: 'Interview' },
   { key: 'accepted', label: 'Offer' },
 ]
-const ACTIVE = ['submitted', 'under_review', 'shortlisted', 'accepted']
+const ACTIVE = ['submitted', 'under_review', 'shortlisted', 'interview', 'accepted']
 const STATUS_LABEL: Record<string, string> = {
-  submitted: 'Sent', under_review: 'Viewed', shortlisted: 'Shortlisted', accepted: 'Offer', rejected: 'Not selected', withdrawn: 'Withdrawn',
+  submitted: 'Sent', under_review: 'Viewed', shortlisted: 'Shortlisted', interview: 'Interview', accepted: 'Offer', rejected: 'Not selected', withdrawn: 'Withdrawn',
 }
 
-export function StudentShell({ page, name, unreadAlerts, unreadMessages, onPage, onSignOut, children }: {
-  page: StudentPage; name: string; unreadAlerts: number; unreadMessages: number
+function dateTime(value: string) {
+  return new Date(value).toLocaleString('en-UG', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+/** A one-event calendar file the student can open in Google/Outlook/Apple calendar. */
+function calendarLink(application: Application) {
+  if (!application.interviewAt) return '#'
+  const start = new Date(application.interviewAt)
+  const end = new Date(start.getTime() + 60 * 60 * 1000)
+  const stamp = (date: Date) => date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+  const text = (value: string) => value.replace(/[\\,;]/g, (match) => `\\${match}`).replace(/\n/g, ' ')
+  const ics = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//InternLink//Interview//EN', 'BEGIN:VEVENT',
+    `UID:interview-${application.id}@internlink`, `DTSTAMP:${stamp(new Date())}`,
+    `DTSTART:${stamp(start)}`, `DTEND:${stamp(end)}`,
+    `SUMMARY:${text(`Interview: ${application.title} (${application.company})`)}`,
+    ...(application.interviewNote ? [`DESCRIPTION:${text(application.interviewNote)}`] : []),
+    'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n')
+  return `data:text/calendar;charset=utf-8,${encodeURIComponent(ics)}`
+}
+
+export function StudentShell({ page, name, unreadAlerts, unreadMessages, savedCount, onPage, onSignOut, children }: {
+  page: StudentPage; name: string; unreadAlerts: number; unreadMessages: number; savedCount: number
   onPage: (page: StudentPage) => void; onSignOut: () => void; children: ReactNode
 }) {
   const [menu, setMenu] = useState(false)
@@ -28,6 +51,7 @@ export function StudentShell({ page, name, unreadAlerts, unreadMessages, onPage,
   const items: { page: StudentPage | 'browse'; label: string; count?: number }[] = [
     { page: 'home', label: 'Home' },
     { page: 'browse', label: 'Browse internships' },
+    { page: 'saved', label: `Saved (${savedCount})` },
     { page: 'applications', label: 'Applications', count: unreadMessages },
     { page: 'notifications', label: 'Notifications', count: unreadAlerts },
     { page: 'profile', label: 'Profile' },
@@ -71,8 +95,9 @@ export function StudentShell({ page, name, unreadAlerts, unreadMessages, onPage,
   )
 }
 
-export function StudentHome({ profile, applications, recommendations, recommendationsError, loading, onPage }: {
-  profile: StudentProfile; applications: Application[]; recommendations: Opportunity[]; recommendationsError: string; loading: boolean
+export function StudentHome({ session, profile, applications, recommendations, recommendationsError, saved, loading, onPage, onSavedChange }: {
+  session: SiteSession; profile: StudentProfile; applications: Application[]; recommendations: Opportunity[]; recommendationsError: string; saved: SavedItem[]; loading: boolean
+  onSavedChange: () => void
   onPage: (page: StudentPage) => void
 }) {
   const tasks = [
@@ -85,7 +110,8 @@ export function StudentHome({ profile, applications, recommendations, recommenda
   const done = tasks.filter((task) => task.done).length + (profile.verified ? 1 : 0)
   const total = tasks.length + 1
   const count = (statuses: string[]) => applications.filter((item) => statuses.includes(item.status)).length
-  const closing = recommendations.filter((item) => !item.appliedStatus && item.deadline).slice().sort((a, b) => a.deadline.localeCompare(b.deadline)).slice(0, 2)
+  const closing = saved.filter((item) => item.is_open && !item.application_status).slice(0, 3)
+  const savedIds = new Set(saved.map((item) => item.listing_id))
 
   return (
     <>
@@ -113,14 +139,14 @@ export function StudentHome({ profile, applications, recommendations, recommenda
           <div className="mini-stats">
             <div><span>SENT</span><b>{applications.length}</b></div>
             <div><span>IN REVIEW</span><b>{count(['under_review'])}</b></div>
-            <div><span>SHORTLISTED</span><b>{count(['shortlisted'])}</b></div>
+            <div><span>INTERVIEW</span><b>{count(['interview'])}</b></div>
             <div><span>OFFERS</span><b>{count(['accepted'])}</b></div>
           </div>
           <button className="btn-link" onClick={() => onPage('applications')}>See all applications</button>
           {closing.length > 0 && <>
             <hr style={{ border: 0, borderTop: '1px solid var(--s-line-soft)', margin: '14px 0' }} />
-            <div className="side-label">Recommended, closing soon</div>
-            {closing.map((item) => <a key={item.id} style={{ display: 'block', fontSize: 14, marginBottom: 4 }} {...linkTo(`/internships/${item.id}`)}>{item.title} · closes {shortDate(item.deadline)}</a>)}
+            <div className="side-label">Saved, closing soon</div>
+            {closing.map((item) => <a key={item.listing_id} style={{ display: 'block', fontSize: 14, marginBottom: 4 }} {...linkTo(`/internships/${item.listing_id}`)}>{item.title} · closes {shortDate(item.application_deadline)}</a>)}
           </>}
         </section>
       </div>
@@ -140,7 +166,10 @@ export function StudentHome({ profile, applications, recommendations, recommenda
             <div className="listing-meta">{item.company} · {item.remote ? 'Remote' : item.location}{item.duration ? ` · ${item.duration} wks` : ''}</div>
             {item.skills.length > 0 && <div className="matches">Matches: {item.skills.join(', ')}</div>}
             <div className="actions">
-              {item.appliedStatus ? <span className="status-pill is-blue">Applied</span> : <a className="btn btn-primary btn-sm" {...linkTo(`/internships/${item.id}`)}>View &amp; apply</a>}
+              {item.appliedStatus ? <span className="status-pill is-blue">Applied</span> : <>
+                <a className="btn btn-primary btn-sm" {...linkTo(`/internships/${item.id}`)}>View &amp; apply</a>
+                <SaveButton session={session} listingId={item.id} saved={savedIds.has(item.id)} onChange={onSavedChange} />
+              </>}
             </div>
           </article>
         ))}
@@ -199,6 +228,10 @@ export function StudentApplications({ token, applications, onWithdraw, onRead }:
                   </div>
                 </div>
                 <Tracker status={item.status} />
+                {item.status === 'interview' && item.interviewAt && <div className="app-note">
+                  Next: interview on <b>{dateTime(item.interviewAt)}</b>{item.interviewNote ? ` · ${item.interviewNote}` : ''} · <a href={calendarLink(item)} download="interview.ics" onClick={(event) => event.stopPropagation()}>Add to calendar</a>
+                </div>}
+                {item.status === 'rejected' && item.decisionNote && <div className="app-note">Employer's note: {item.decisionNote}</div>}
                 {item.placementStatus && <div className="app-note">Placement {item.placementStatus === 'pending' ? 'waiting for your university to approve' : item.placementStatus}.</div>}
                 {['submitted', 'under_review'].includes(item.status) && <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                   <a className="btn btn-sm" {...linkTo(`/internships/${item.opportunityId}`)}>View internship</a>
@@ -266,6 +299,38 @@ function Conversation({ token, application, onRead }: { token: string; applicati
         <button className="btn btn-primary" disabled={busy || !body.trim()}>Send</button>
       </form>}
     </section>
+  )
+}
+
+export function SavedPage({ session, saved, onChange }: { session: SiteSession; saved: SavedItem[]; onChange: () => void }) {
+  async function remove(listingId: number) {
+    if (!session) return
+    await savedApi.unsave(session.token, listingId).catch(() => undefined)
+    onChange()
+  }
+  return (
+    <>
+      <h1>Saved internships</h1>
+      <p className="muted" style={{ margin: '4px 0 18px' }}>Internships you saved to come back to.</p>
+      {saved.length === 0 ? <div className="card empty">Nothing saved yet. Use <b>Save</b> on any internship to keep it here. <a {...linkTo('/internships')}>Browse internships</a></div>
+        : saved.map((item) => (
+          <article key={item.listing_id} className="result-card">
+            <span className="logo-box">{initialsOf(item.company_name)}</span>
+            <div>
+              <div className="muted" style={{ fontSize: 13 }}>{item.company_name} · {item.sector}</div>
+              {item.is_open ? <a className="listing-title" {...linkTo(`/internships/${item.listing_id}`)}>{item.title}</a> : <span className="listing-title" style={{ textDecoration: 'none' }}>{item.title}</span>}
+              <div className="listing-meta" style={{ marginTop: 4 }}>{item.is_remote ? 'Remote' : item.location} · {item.duration_weeks} weeks</div>
+            </div>
+            <div className="result-side">
+              <span>{item.is_open ? `Closes ${shortDate(item.application_deadline)}` : 'Closed'}</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {item.application_status ? <span className="status-pill is-blue">Applied</span> : item.is_open && <a className="btn btn-primary btn-sm" {...linkTo(`/internships/${item.listing_id}#apply`)}>Apply</a>}
+                <button className="btn btn-sm" onClick={() => void remove(item.listing_id)}>Remove</button>
+              </div>
+            </div>
+          </article>
+        ))}
+    </>
   )
 }
 

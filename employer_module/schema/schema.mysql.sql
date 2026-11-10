@@ -197,13 +197,16 @@ CREATE TABLE IF NOT EXISTS applications (
     status         VARCHAR(20) NOT NULL DEFAULT 'submitted',
     submitted_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     decided_at     DATETIME,
+    interview_at   DATETIME,
+    interview_note VARCHAR(500),
+    decision_note  VARCHAR(500),
     PRIMARY KEY (application_id),
     CONSTRAINT uq_applications_listing_student UNIQUE (listing_id, student_id),
     CONSTRAINT fk_applications_listing FOREIGN KEY (listing_id) REFERENCES listings(listing_id),
     CONSTRAINT fk_applications_student
         FOREIGN KEY (student_id) REFERENCES student_profiles(student_id),
     CONSTRAINT ck_applications_status
-        CHECK (status IN ('submitted', 'under_review', 'shortlisted', 'accepted', 'rejected')),
+        CHECK (status IN ('submitted', 'under_review', 'shortlisted', 'interview', 'accepted', 'rejected')),
     KEY ix_applications_listing_status (listing_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -290,7 +293,9 @@ SELECT a.application_id,
        a.match_score,
        a.status,
        a.submitted_at,
-       sp.cv_path
+       sp.cv_path,
+       1                 AS student_verified,  -- verification lives in the shared schema
+       a.interview_at
 FROM applications a
 JOIN listings l          ON l.listing_id = a.listing_id
 JOIN student_profiles sp ON sp.student_id = a.student_id
