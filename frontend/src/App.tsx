@@ -3,9 +3,9 @@ import {
   ArrowDownUp, ArrowRight, Bell, BriefcaseBusiness,
   Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Clock3, FileText,
   Filter, GraduationCap, LayoutDashboard, LogOut, MapPin, Menu, Search,
-  ShieldCheck, SlidersHorizontal, Sparkles, Users, X,
+  Library, Plus, ShieldCheck, SlidersHorizontal, Sparkles, Users, X,
 } from 'lucide-react'
-import { ApiError, employerRequest, roleApi, studentApi, type AuthUser, type CatalogItem } from './api'
+import { ApiError, employerRequest, roleApi, studentApi, type AuthUser, type CatalogItem, type CoordinatorCatalog } from './api'
 import { AuthGate, isAuthLinkPath } from './AuthPages'
 import { BrandMark } from './BrandMark'
 import type { Application, Opportunity, Page, Role, StudentProfile } from './types'
@@ -36,6 +36,7 @@ const universityNav: { page: Page; label: string; icon: typeof LayoutDashboard }
   { page: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { page: 'approvals', label: 'Pending approvals', icon: CheckCircle2 },
   { page: 'students', label: 'Students', icon: Users },
+  { page: 'catalog', label: 'Departments & programmes', icon: Library },
   { page: 'reports', label: 'Reports', icon: FileText },
 ]
 
@@ -479,7 +480,10 @@ function App() {
               } catch (error) { setToast(messageFrom(error)) }
             }} />
           )}
-          {role === 'university' && (
+          {role === 'university' && page === 'catalog' && session && (
+            <CoordinatorCatalogPage token={session.token} onPage={changePage} toast={setToast} />
+          )}
+          {role === 'university' && page !== 'catalog' && (
             <LiveRoleWorkspace role="university" page={page} loading={roleLoading} data={coordinatorStats} records={page === 'approvals' ? coordinatorPlacements : coordinatorStudents} onPage={changePage} onRefresh={() => session && void loadLiveRole(session)} onAction={async (id, action) => {
               if (!session) return
               try {
@@ -630,6 +634,7 @@ function LiveRoleWorkspace({
         <button className={page === 'dashboard' ? 'selected' : ''} onClick={() => onPage('dashboard')}>Overview</button>
         <button className={page === 'approvals' ? 'selected' : ''} onClick={() => onPage('approvals')}>Placement approvals</button>
         <button className={page === 'students' ? 'selected' : ''} onClick={() => onPage('students')}>Students</button>
+        <button onClick={() => onPage('catalog')}>Departments &amp; programmes</button>
       </div>}
       {role === 'admin' && page === 'reports' && <AdminAuditLog records={records} />}
       {role !== 'admin' || page !== 'reports' ? <div className="table-card">
@@ -730,6 +735,94 @@ function LiveRoleWorkspace({
         </form>}
       </section>}
       {role === 'employer' && page === 'dashboard' && <button className="button button-primary" onClick={() => onPage('listings')}>Manage opportunities <ArrowRight size={15} /></button>}
+    </div>
+  )
+}
+
+function CoordinatorCatalogPage({ token, onPage, toast }: { token: string; onPage: (page: Page) => void; toast: (message: string) => void }) {
+  const [catalog, setCatalog] = useState<CoordinatorCatalog | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [departmentName, setDepartmentName] = useState('')
+  const [programme, setProgramme] = useState({ department_id: '', name: '', programme_group: '' })
+
+  async function load() {
+    try {
+      setCatalog(await roleApi.coordinatorCatalog(token))
+    } catch (loadError) {
+      setError(messageFrom(loadError))
+    }
+  }
+
+  useEffect(() => { void load() }, [token])
+
+  async function submit(action: () => Promise<unknown>, done: string, reset: () => void) {
+    setBusy(true)
+    setError('')
+    try {
+      await action()
+      reset()
+      await load()
+      toast(done)
+    } catch (submitError) {
+      setError(messageFrom(submitError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const departments = catalog?.departments ?? []
+  const readyCount = departments.filter((department) => department.programmes.length > 0).length
+
+  return (
+    <div className="page-wrap">
+      <PageIntro
+        eyebrow="UNIVERSITY COORDINATOR"
+        title="Departments & programmes"
+        description="Students choose from this list when they create an account. A department needs at least one programme before students can pick it."
+        action={<div className="page-actions"><button className="button button-secondary button-small" onClick={() => onPage('dashboard')}>Back to overview</button></div>}
+      />
+      {catalog && departments.length === 0 && <div className="form-error" role="status">Your university has no departments yet, so students can't sign up. Add a department and a programme below.</div>}
+      {error && <div className="form-error" role="alert">{error}</div>}
+      <div className="table-card">
+        <div className="table-toolbar"><div><h2>Current catalog</h2><p>{catalog ? `${departments.length} department${departments.length === 1 ? '' : 's'}, ${readyCount} open for student sign-up.` : 'Loading…'}</p></div></div>
+        {!catalog ? <LoadingState /> : departments.length === 0 ? <EmptyState title="No departments yet" detail="Add your first department below." /> : <div className="table-scroll"><table><thead><tr><th>Department</th><th>Programmes</th></tr></thead><tbody>
+          {departments.map((department) => <tr key={department.id}>
+            <td>{department.name}</td>
+            <td>{department.programmes.length === 0 ? <span className="status-badge status-pending"><i />No programmes yet</span> : department.programmes.map((item) => `${item.name} (${item.programme_group.replaceAll('_', ' ')})`).join(', ')}</td>
+          </tr>)}
+        </tbody></table></div>}
+      </div>
+      {catalog?.can_add_departments && <section className="table-card listing-create-card">
+        <div className="table-toolbar"><div><h2>Add a department</h2><p>For example “Computer Science” or “Accounting and Finance”.</p></div></div>
+        <form className="auth-form listing-form" onSubmit={(event) => {
+          event.preventDefault()
+          const name = departmentName.trim()
+          void submit(() => roleApi.addDepartment(token, name), `${name} added.`, () => setDepartmentName(''))
+        }}>
+          <label>Department name<input value={departmentName} onChange={(event) => setDepartmentName(event.target.value)} maxLength={160} required /></label>
+          <button className="button button-primary" disabled={busy}><Plus size={15} /> Add department</button>
+        </form>
+      </section>}
+      {catalog && departments.length > 0 && <section className="table-card listing-create-card">
+        <div className="table-toolbar"><div><h2>Add a programme</h2><p>The group lets matching treat related programmes, such as all computing degrees, as a partial fit.</p></div></div>
+        <form className="auth-form listing-form" onSubmit={(event) => {
+          event.preventDefault()
+          const name = programme.name.trim()
+          void submit(
+            () => roleApi.addProgramme(token, Number(programme.department_id), name, programme.programme_group),
+            `${name} added.`,
+            () => setProgramme((current) => ({ ...current, name: '' })),
+          )
+        }}>
+          <div className="form-grid">
+            <label>Department<select value={programme.department_id} onChange={(event) => setProgramme((current) => ({ ...current, department_id: event.target.value }))} required><option value="">Select department</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
+            <label>Programme group<select value={programme.programme_group} onChange={(event) => setProgramme((current) => ({ ...current, programme_group: event.target.value }))} required><option value="">Select group</option>{catalog.programme_groups.map((group) => <option key={group} value={group}>{group.replaceAll('_', ' ')}</option>)}</select></label>
+          </div>
+          <label>Programme name<input value={programme.name} onChange={(event) => setProgramme((current) => ({ ...current, name: event.target.value }))} maxLength={160} placeholder="e.g. BSc Computer Science" required /></label>
+          <button className="button button-primary" disabled={busy}><Plus size={15} /> Add programme</button>
+        </form>
+      </section>}
     </div>
   )
 }

@@ -231,7 +231,7 @@ function ChooseAccount({ onBack, onChoose }: { onBack: () => void; onChoose: (ty
 function StudentForm({ onBack, onDone }: { onBack: () => void; onDone: (message: string, email: string) => void }) {
   const [universities, setUniversities] = useState<University[]>([])
   const [departments, setDepartments] = useState<CatalogItem[] | null>(null)
-  const [programmes, setProgrammes] = useState<CatalogItem[]>([])
+  const [programmes, setProgrammes] = useState<CatalogItem[] | null>(null)
   const [values, setValues] = useState({ full_name: '', email: '', password: '', student_number: '', university_id: '', department_id: '', programme_id: '', year_of_study: '1' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -241,17 +241,25 @@ function StudentForm({ onBack, onDone }: { onBack: () => void; onDone: (message:
       .then((result) => setUniversities(result.universities))
       .catch((reason: unknown) => setError(messageFrom(reason)))
   }, [])
+  // Clear the old list straight away and ignore replies for an earlier
+  // selection, so a slow response can't show another university's options.
   useEffect(() => {
-    if (!values.university_id) { setDepartments(null); return }
+    setDepartments(null)
+    if (!values.university_id) return
+    let current = true
     studentApi.departments(Number(values.university_id))
-      .then((result) => setDepartments(result.departments))
-      .catch((reason: unknown) => setError(messageFrom(reason)))
+      .then((result) => { if (current) setDepartments(result.departments) })
+      .catch((reason: unknown) => { if (current) setError(messageFrom(reason)) })
+    return () => { current = false }
   }, [values.university_id])
   useEffect(() => {
-    if (!values.department_id) { setProgrammes([]); return }
+    setProgrammes(null)
+    if (!values.department_id) return
+    let current = true
     studentApi.programmes(Number(values.department_id))
-      .then((result) => setProgrammes(result.programmes))
-      .catch((reason: unknown) => setError(messageFrom(reason)))
+      .then((result) => { if (current) setProgrammes(result.programmes) })
+      .catch((reason: unknown) => { if (current) setError(messageFrom(reason)) })
+    return () => { current = false }
   }, [values.department_id])
 
   function update(name: keyof typeof values, value: string) {
@@ -284,25 +292,30 @@ function StudentForm({ onBack, onDone }: { onBack: () => void; onDone: (message:
   }
 
   const universityNotReady = departments !== null && departments.length === 0
+  const departmentNotReady = programmes !== null && programmes.length === 0
+  const emailDomain = universities.find((item) => String(item.id) === values.university_id)?.email_domain
   return (
     <>
       <BackLink onClick={onBack} />
       <CardHeading icon={<GraduationCap size={20} />} label="STUDENT ACCOUNT" title="Create your account" subtitle="Register with your university email to get started." />
       <form className="auth-form registration-form" onSubmit={(event) => void submit(event)}>
         <label>Full name<input autoComplete="name" value={values.full_name} onChange={(event) => update('full_name', event.target.value)} required /></label>
-        <label>University email<input type="email" autoComplete="email" placeholder="name@university.ac.ug" value={values.email} onChange={(event) => update('email', event.target.value)} required /></label>
-        <label>Student number<input value={values.student_number} onChange={(event) => update('student_number', event.target.value)} required /></label>
         <Field label="University" hint="Can't find yours? Ask your internship coordinator to register it with “I work at a university”.">
           <select value={values.university_id} onChange={(event) => update('university_id', event.target.value)} required>
-            <option value="">Select university</option>
+            <option value="">{universities.length ? 'Select university' : 'Loading universities…'}</option>
             {universities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
         </Field>
-        {universityNotReady && <div className="form-error" role="status">This university hasn't finished setting up its departments yet. Try again later or contact your coordinator.</div>}
+        {universityNotReady && <div className="form-error" role="status">This university hasn't added its departments yet. Ask your internship coordinator to add them under “Departments &amp; programmes”.</div>}
+        <Field label="University email" hint={emailDomain ? `Use your ${emailDomain} email address (a student subdomain such as std.${emailDomain} also works).` : 'Use the email address your university gave you.'}>
+          <input type="email" autoComplete="email" placeholder={emailDomain ? `name@${emailDomain}` : 'name@university.ac.ug'} value={values.email} onChange={(event) => update('email', event.target.value)} required />
+        </Field>
+        <label>Student number<input value={values.student_number} onChange={(event) => update('student_number', event.target.value)} required /></label>
         <div className="form-pair">
           <label>Department<select value={values.department_id} onChange={(event) => update('department_id', event.target.value)} required disabled={!departments?.length}><option value="">Select department</option>{departments?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <label>Programme<select value={values.programme_id} onChange={(event) => update('programme_id', event.target.value)} required disabled={!programmes.length}><option value="">Select programme</option>{programmes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label>Programme<select value={values.programme_id} onChange={(event) => update('programme_id', event.target.value)} required disabled={!programmes?.length}><option value="">Select programme</option>{programmes?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         </div>
+        {departmentNotReady && <div className="form-error" role="status">This department has no programmes yet. Pick another department or ask your coordinator to add your programme.</div>}
         <label>Year of study<select value={values.year_of_study} onChange={(event) => update('year_of_study', event.target.value)}>{[1, 2, 3, 4, 5, 6].map((year) => <option key={year} value={year}>Year {year}</option>)}</select></label>
         <Field label="Password" hint="Use at least 10 characters.">
           <input type="password" autoComplete="new-password" minLength={10} value={values.password} onChange={(event) => update('password', event.target.value)} required />

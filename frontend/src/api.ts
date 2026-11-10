@@ -56,7 +56,10 @@ export async function apiRequest<T>(
 }
 
 export type CatalogItem = { id: number; name: string }
-export type University = CatalogItem & { location: string }
+export type University = CatalogItem & { location: string; email_domain?: string }
+export type CatalogProgramme = CatalogItem & { programme_group: string }
+export type CatalogDepartment = CatalogItem & { programmes: CatalogProgramme[] }
+export type CoordinatorCatalog = { departments: CatalogDepartment[]; programme_groups: string[]; can_add_departments: boolean }
 export type AuthUser = { user_id: number; full_name: string; email: string; role: 'student' | 'employer' | 'university' | 'admin' }
 
 export async function employerRequest<T>(action: string, token: string, payload: Record<string, unknown> = {}) {
@@ -192,6 +195,18 @@ export const roleApi = {
     apiRequest<{ students: Record<string, unknown>[] }>('/api/v1/coordinator/students', {}, token),
   coordinatorPlacements: (token: string) =>
     apiRequest<{ placements: Record<string, unknown>[] }>('/api/v1/coordinator/placements', {}, token),
+  coordinatorCatalog: (token: string) =>
+    apiRequest<CoordinatorCatalog>('/api/v1/coordinator/catalog', {}, token),
+  addDepartment: (token: string, name: string) =>
+    apiRequest<{ department: CatalogDepartment }>('/api/v1/coordinator/departments', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }, token),
+  addProgramme: (token: string, departmentId: number, name: string, programmeGroup: string) =>
+    apiRequest<{ programme: CatalogProgramme }>('/api/v1/coordinator/programmes', {
+      method: 'POST',
+      body: JSON.stringify({ department_id: departmentId, name, programme_group: programmeGroup }),
+    }, token),
   verifyStudent: (token: string, id: number) =>
     apiRequest<{ student_id: number; verified: boolean }>(`/api/v1/coordinator/students/${id}`, { method: 'POST' }, token),
   decidePlacement: (token: string, id: number, action: string, reason?: string) =>

@@ -220,8 +220,8 @@ def list_my_listings(
                 WHERE a.listing_id = l.listing_id AND a.status = 'submitted') AS new_applicants
         FROM listings l
         WHERE l.company_id = %s
-          AND (%s IS NULL OR l.status = %s)
-          AND (%s IS NULL
+          AND (CAST(%s AS TEXT) IS NULL OR l.status = %s)
+          AND (CAST(%s AS TEXT) IS NULL
                OR LOWER(l.title) LIKE %s ESCAPE '!'
                OR LOWER(l.description) LIKE %s ESCAPE '!')
         ORDER BY l.created_at DESC, l.listing_id DESC
