@@ -5,6 +5,7 @@ import {
   type AuthUser, type ListingDetail, type ListingSummary, type SearchResult,
 } from './api'
 import { SuggestCompany } from './CompanyPages'
+import { EmployerArt, StudentArt, UniversityArt } from './Illustrations'
 import { linkTo, navigate } from './router'
 import './site.css'
 
@@ -222,19 +223,19 @@ export function HomePage({ session }: { session: SiteSession }) {
           <h2 style={{ fontSize: 28, marginBottom: 18 }}>Who InternLink is for</h2>
           <div className="audience-grid">
             <article className="audience-card" id="students">
-              <div className="placeholder-box">Students</div>
+              <StudentArt />
               <h3>Students</h3>
               <ul><li>Recommendations based on your course and skills</li><li>Apply with one profile</li><li>Track applications and message employers</li></ul>
               <a className="btn btn-primary" {...linkTo('/signup?type=student')}>Create a student account</a>
             </article>
             <article className="audience-card" id="employers">
-              <div className="placeholder-box">Employers</div>
+              <EmployerArt />
               <h3>Employers</h3>
               <ul><li>Post internships for free</li><li>See applicants ranked by fit</li><li>Shortlist, message and make offers</li></ul>
               <a className="btn" {...linkTo('/signup?type=employer')}>Register your company</a>
             </article>
             <article className="audience-card" id="universities">
-              <div className="placeholder-box">Universities</div>
+              <UniversityArt />
               <h3>Universities</h3>
               <ul><li>Verify your students</li><li>Approve placements</li><li>Export placement reports</li></ul>
               <a className="btn" {...linkTo('/signup?type=university')}>Bring your university on board</a>
