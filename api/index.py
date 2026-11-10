@@ -38,6 +38,8 @@ from matching_engine.service import (
 )
 from student_module import accounts as account_service
 from student_module import catalog as catalog_service
+from student_module import messages as message_service
+from student_module import public as public_service
 from student_module import service as student_service
 
 logger = logging.getLogger("internlink.vercel")
@@ -209,6 +211,9 @@ class handler(BaseHTTPRequestHandler):
             "/api/v1/coordinator/programmes": ("POST", self._coordinator_add_programme),
             "/api/v1/public/universities": ("GET", self._student_universities),
             "/api/v1/public/catalogs": ("GET", self._student_catalogs),
+            "/api/v1/public/home": ("GET", self._public_home),
+            "/api/v1/public/opportunities": ("GET", self._public_opportunities),
+            "/api/v1/public/university-requests": ("POST", self._public_university_request),
             "/api/v1/students/me/profile": ("GET, PUT", self._student_profile),
             "/api/v1/opportunities": ("GET", self._student_opportunities),
             "/api/v1/students/me/applications": ("GET, POST", self._student_applications),
@@ -226,6 +231,23 @@ class handler(BaseHTTPRequestHandler):
         parts = path.strip("/").split("/")
         if len(parts) == 6 and parts[:3] == ["api", "v1", "public"] and parts[3] == "universities" and parts[5] == "departments":
             self._student_catalog_detail(parts[4], "departments")
+            return
+        if len(parts) == 6 and parts[:4] == ["api", "v1", "public", "universities"] and parts[5] == "programmes":
+            self._public_university_programmes(parts[4])
+            return
+        if len(parts) == 5 and parts[:4] == ["api", "v1", "public", "opportunities"]:
+            self._public_opportunity_detail(parts[4])
+            return
+        if (
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "students", "me", "applications"]
+            and parts[6] == "messages"
+            and parts[5].isdigit()
+        ):
+            if self.command not in ("GET", "POST"):
+                self._send_json(405, {"detail": "Method Not Allowed"}, (("Allow", "GET, POST"),))
+                return
+            self._student_messages(int(parts[5]))
             return
         if len(parts) == 6 and parts[:3] == ["api", "v1", "public"] and parts[3] == "departments" and parts[5] == "programmes":
             self._student_catalog_detail(parts[4], "programmes")
@@ -947,6 +969,9 @@ class handler(BaseHTTPRequestHandler):
                 student_id = student_service.student_id_for_user(conn, user_id)
                 if self.command == "GET":
                     result = student_service.list_applications(conn, student_id)
+                    unread = message_service.unread_by_application(conn, user_id)
+                    for row in result:
+                        row["unread_messages"] = unread.get(int(row["application_id"]), 0)
                     self._send_json(200, {"applications": result})
                     return
                 payload = self._read_json_request()
@@ -963,6 +988,76 @@ class handler(BaseHTTPRequestHandler):
                 return
             logger.exception("Student application request failed")
             self._send_json(503, {"error": {"code": "SERVICE_UNAVAILABLE", "message": "The student service is temporarily unavailable."}})
+
+    def _optional_student_id(self, conn) -> int | None:
+        """The signed-in student's profile id, or None for visitors.
+
+        Public pages show extra detail (match score, applied status) to a
+        signed-in student but never fail because of a stale or foreign token.
+        """
+        if not self.headers.get("Authorization"):
+            return None
+        try:
+            user_id = self._student_user_id()
+            return student_service.student_id_for_user(conn, user_id)
+        except (student_service.StudentError, ConfigurationError):
+            return None
+
+    def _public_home(self):
+        self._student_call(lambda conn, _user_id: public_service.home(conn))
+
+    def _public_opportunities(self):
+        query = parse_qs(urlsplit(self.path).query)
+        filters = {key: values[-1] for key, values in query.items()}
+        self._student_call(
+            lambda conn, _user_id: public_service.search_opportunities(conn, filters, self._optional_student_id(conn))
+        )
+
+    def _public_opportunity_detail(self, raw_id: str):
+        if not raw_id.isdigit() or int(raw_id) <= 0:
+            self._send_json(404, {"error": {"code": "LISTING_NOT_FOUND", "message": "Internship not found."}})
+            return
+        listing_id = int(raw_id)
+        self._student_call(
+            lambda conn, _user_id: {
+                "opportunity": public_service.opportunity_detail(conn, listing_id, self._optional_student_id(conn))
+            }
+        )
+
+    def _public_university_programmes(self, raw_id: str):
+        if not raw_id.isdigit() or int(raw_id) <= 0:
+            self._send_json(422, {"error": {"code": "INVALID_ID", "message": "Invalid catalog id."}})
+            return
+        university_id = int(raw_id)
+        self._student_call(lambda conn, _user_id: {"programmes": public_service.university_programmes(conn, university_id)})
+
+    def _public_university_request(self):
+        try:
+            payload = self._read_json_request()
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+
+        def save(conn, _user_id):
+            with conn.transaction():
+                return public_service.request_university(conn, payload)
+        self._student_call(save, success_status=201)
+
+    def _student_messages(self, application_id: int):
+        try:
+            payload = self._read_json_request() if self.command == "POST" else {}
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+
+        def run(conn, user_id):
+            student_id = student_service.student_id_for_user(conn, user_id)
+            with conn.transaction():
+                conn.execute("SELECT set_config('app.user_id', %s, true)", (str(user_id),))
+                if self.command == "POST":
+                    return message_service.reply(conn, user_id, student_id, application_id, payload)
+                return message_service.thread(conn, user_id, student_id, application_id)
+        self._student_call(run, success_status=201 if self.command == "POST" else 200, authenticated=True)
 
     def _student_withdraw_application(self, application_id: int):
         try:

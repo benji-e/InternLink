@@ -265,7 +265,7 @@ def get_profile(conn, student_id: int) -> dict:
                    un.university_id, un.name AS university,
                    d.department_id, d.name AS department,
                    p.programme_id, p.name AS programme,
-                   s.completeness_pct, s.is_complete
+                   s.completeness_pct, s.is_complete, s.has_cv
             FROM student_profiles sp
             JOIN users u ON u.user_id = sp.user_id
             JOIN universities un ON un.university_id = sp.university_id
@@ -297,6 +297,7 @@ def get_profile(conn, student_id: int) -> dict:
     profile["willing_to_relocate"] = bool(profile["willing_to_relocate"])
     profile["verified"] = bool(profile["verified"])
     profile["is_complete"] = bool(profile["is_complete"])
+    profile["has_cv"] = bool(profile["has_cv"])
     return profile
 
 

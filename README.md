@@ -62,6 +62,7 @@ Run the schema scripts against the new database, in this order:
 2. `02_functions_triggers.sql`
 3. `03_views_functions.sql`
 4. `04_roles.sql` if using the database roles defined by the project.
+5. `08_university_requests.sql` (students asking for a university that isn't listed yet)
 
 Do **not** run `05_seed.sql` on a production database. It contains fixed demo
 accounts and sample records. `06_tests.sql` and `07_load_test.sql` are
@@ -168,11 +169,22 @@ coordinator and administrator accounts.
 - `GET /api/v1/public/universities`, `/api/v1/public/catalogs`
 - `GET /api/v1/public/universities/{id}/departments`
 - `GET /api/v1/public/departments/{id}/programmes`
+- `GET /api/v1/public/universities/{id}/programmes`: every programme with its department, for sign-up
+- `GET /api/v1/public/home`: latest internships, partner universities and locations
+- `GET /api/v1/public/opportunities` with `q`, `location`, `sector`, `remote`, `min_weeks`,
+  `max_weeks`, `closing_soon`, `my_programme`, `sort` (`closing` or `newest`) and `page`;
+  returns sector counts for the filter panel
+- `GET /api/v1/public/opportunities/{id}`: internship details. With a student token it also
+  returns the match score breakdown and the student's application
+- `POST /api/v1/public/university-requests` with `university_name`, `requester_email` and
+  optional `coordinator_email`
 - `GET`, `PUT /api/v1/students/me/profile`
 - `GET /api/v1/opportunities` with search and filter parameters
 - `GET /api/v1/students/me/recommendations`
 - `GET`, `POST /api/v1/students/me/applications`
 - `POST /api/v1/students/me/applications/{id}/withdraw`
+- `GET`, `POST /api/v1/students/me/applications/{id}/messages`: read the employer's
+  messages and reply (only after the employer has written, while shortlisted or accepted)
 - `GET /api/v1/students/me/notifications`
 - `POST /api/v1/students/me/notifications/{id}/read`
 
