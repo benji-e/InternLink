@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Mail } from 'lucide-react'
-import { accountApi, ApiError, publicApi, studentApi, type AuthUser, type ProgrammeOption, type University } from './api'
+import { accountApi, ApiError, inviteApi, publicApi, studentApi, type AuthUser, type ProgrammeOption, type University } from './api'
 import { linkTo, navigate } from './router'
 import { Wordmark } from './PublicSite'
 import './site.css'
@@ -534,6 +534,69 @@ function ForgotForm({ onBack, onDone }: { onBack: () => void; onDone: (message: 
         <button type="button" className="btn-link" onClick={onBack}>Back to sign in</button>
       </form>
     </section>
+  )
+}
+
+/** /accept-invite?token=… : an invited coordinator sets their name and password. */
+export function AcceptInvitePage({ search }: { search: string }) {
+  const token = new URLSearchParams(search).get('token') ?? ''
+  const [invite, setInvite] = useState<{ email: string; university: string; department: string | null } | null>(null)
+  const [error, setError] = useState('')
+  const [values, setValues] = useState({ full_name: '', password: '', confirm: '' })
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState('')
+
+  useEffect(() => {
+    if (!token) {
+      setError('This invite link is incomplete. Ask whoever invited you to send it again.')
+      return
+    }
+    inviteApi.details(token).then((result) => setInvite(result.invite)).catch((reason: unknown) => setError(messageFrom(reason)))
+  }, [token])
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (values.password !== values.confirm) {
+      setError('The two passwords don’t match.')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      setDone((await inviteApi.accept(token, values.full_name, values.password)).message)
+    } catch (reason) {
+      setError(messageFrom(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const update = (name: keyof typeof values, value: string) => setValues((current) => ({ ...current, [name]: value }))
+  return (
+    <div className="site is-grey">
+      <header className="site-header"><div className="site-container site-header-inner"><Wordmark /></div></header>
+      <main className="site-main"><div className="site-container signup-wrap"><section className="card auth-single">
+        <span className="eyebrow-s">Coordinator invitation</span>
+        {done ? <>
+          <h1 className="signup-title" style={{ fontSize: 26 }}>You're all set</h1>
+          <div className="notice is-ok" role="status" style={{ margin: '12px 0' }}>{done}</div>
+          <a className="btn btn-primary" {...linkTo('/signin')}>Sign in</a>
+        </> : !invite ? <>
+          <h1 className="signup-title" style={{ fontSize: 26 }}>Join InternLink</h1>
+          {error ? <div className="notice is-error" role="alert">{error}</div> : <p className="muted">Checking your invitation…</p>}
+        </> : <>
+          <h1 className="signup-title" style={{ fontSize: 26 }}>Join {invite.university}</h1>
+          <p className="muted" style={{ fontSize: 14 }}>You're joining as an internship coordinator{invite.department ? ` for ${invite.department}` : ''}. You'll verify students and approve their placements. Your sign-in email is <b>{invite.email}</b>.</p>
+          <form className="stack" onSubmit={(event) => void submit(event)}>
+            <Field label="Full name"><input autoComplete="name" value={values.full_name} onChange={(event) => update('full_name', event.target.value)} required maxLength={160} /></Field>
+            <Field label="Password" hint="At least 10 characters."><input type="password" autoComplete="new-password" minLength={10} value={values.password} onChange={(event) => update('password', event.target.value)} required /></Field>
+            <Field label="Confirm password"><input type="password" autoComplete="new-password" minLength={10} value={values.confirm} onChange={(event) => update('confirm', event.target.value)} required /></Field>
+            {error && <div className="notice is-error" role="alert">{error}</div>}
+            <button className="btn btn-primary btn-block" disabled={busy}>{busy ? 'Setting up…' : 'Create my account'}</button>
+          </form>
+        </>}
+      </section></div></main>
+    </div>
   )
 }
 

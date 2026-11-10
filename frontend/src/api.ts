@@ -71,6 +71,20 @@ export async function employerRequest<T>(action: string, token: string, payload:
   return result.data
 }
 
+/** Employer actions that return a file (download_cv) rather than JSON. */
+export async function employerDownload(action: string, token: string, payload: Record<string, unknown>) {
+  const response = await fetch(`${API_BASE}/api/employer/${action}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({})) as { message?: string }
+    throw new ApiError(response.status, 'DOWNLOAD_FAILED', error.message ?? 'Could not download the file.')
+  }
+  return response.blob()
+}
+
 /** Employer registration and email confirmation need no sign-in. */
 export async function employerPublicRequest<T>(action: 'register' | 'verify_email', payload: Record<string, unknown>) {
   const result = await apiRequest<{ ok: boolean; data: T }>(
@@ -335,4 +349,72 @@ export const adminApi = {
       method: 'POST',
       body: JSON.stringify({ university_name: universityName, status }),
     }, token),
+  universities: (token: string) =>
+    apiRequest<{ universities: VerifiedUniversity[] }>('/api/v1/admin/universities', {}, token),
+  coordinators: (token: string, universityId: number) =>
+    apiRequest<{ coordinators: CoordinatorRow[] }>(`/api/v1/admin/universities/${universityId}/coordinators`, {}, token),
+  invite: (token: string, universityId: number, email: string, departmentId?: number) =>
+    apiRequest<{ message: string }>(`/api/v1/admin/universities/${universityId}/coordinators`, {
+      method: 'POST',
+      body: JSON.stringify({ email, department_id: departmentId }),
+    }, token),
+}
+
+export type VerifiedUniversity = {
+  university_id: number; name: string; location: string; email_domain: string
+  active_coordinators: number; pending_coordinators: number; students: number
+}
+export type CoordinatorRow = {
+  user_id: number; full_name: string; email: string; status: string; department: string | null; invited: boolean; created_at: string
+}
+
+/** A university-wide coordinator managing colleagues at their own university. */
+export const coordinatorTeamApi = {
+  list: (token: string) => apiRequest<{ coordinators: CoordinatorRow[] }>('/api/v1/coordinator/coordinators', {}, token),
+  invite: (token: string, email: string, departmentId?: number) =>
+    apiRequest<{ message: string }>('/api/v1/coordinator/coordinators', {
+      method: 'POST',
+      body: JSON.stringify({ email, department_id: departmentId }),
+    }, token),
+}
+
+export const inviteApi = {
+  details: (token: string) =>
+    apiRequest<{ invite: { email: string; university: string; department: string | null } }>(`/api/v1/auth/invite?token=${encodeURIComponent(token)}`),
+  accept: (token: string, fullName: string, password: string) =>
+    postJson<{ message: string; email: string }>('/api/v1/auth/accept-invite', { token, full_name: fullName, password }),
+}
+
+export type CvInfo = { filename: string; content_type: string; size_bytes: number; uploaded_at: string }
+export const MAX_CV_BYTES = 4 * 1024 * 1024
+
+export const cvApi = {
+  info: (token: string) => apiRequest<{ cv: CvInfo | null }>('/api/v1/students/me/cv', {}, token),
+  upload: (token: string, file: File) =>
+    apiRequest<{ cv: CvInfo }>(`/api/v1/students/me/cv?filename=${encodeURIComponent(file.name)}`, {
+      method: 'PUT',
+      body: file,
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    }, token),
+  remove: (token: string) => apiRequest<{ cv: null }>('/api/v1/students/me/cv', { method: 'DELETE' }, token),
+  /** Fetch the student's own CV and hand it to the browser as a download. */
+  download: async (token: string) => {
+    const response = await fetch(`${API_BASE}/api/v1/students/me/cv/file`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!response.ok) throw new ApiError(response.status, 'CV_DOWNLOAD_FAILED', 'Could not download your CV.')
+    const name = /filename\*=UTF-8''([^;]+)/.exec(response.headers.get('Content-Disposition') ?? '')?.[1]
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(await response.blob())
+    link.download = name ? decodeURIComponent(name) : 'CV'
+    link.click()
+    URL.revokeObjectURL(link.href)
+  },
+}
+
+export type JobAlert = { alert_id: number; filters: Record<string, string>; label: string; created_at: string; last_sent_at: string | null }
+export const alertApi = {
+  list: (token: string) => apiRequest<{ alerts: JobAlert[] }>('/api/v1/students/me/alerts', {}, token),
+  create: (token: string, filters: Record<string, string>) =>
+    apiRequest<{ alert: JobAlert; created: boolean }>('/api/v1/students/me/alerts', { method: 'POST', body: JSON.stringify({ filters }) }, token),
+  remove: (token: string, alertId: number) =>
+    apiRequest<{ deleted: boolean }>(`/api/v1/students/me/alerts/${alertId}`, { method: 'DELETE' }, token),
 }

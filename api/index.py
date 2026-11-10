@@ -41,6 +41,9 @@ from student_module import catalog as catalog_service
 from student_module import messages as message_service
 from student_module import public as public_service
 from student_module import admin as admin_service
+from student_module import alerts as alert_service
+from student_module import cv as cv_service
+from student_module import invites as invite_service
 from student_module import saved as saved_service
 from student_module import service as student_service
 
@@ -144,7 +147,7 @@ def _build_employer_context() -> tuple[AppContext, PostgresDatabase]:
         auth=ReferenceTokenService(secret),
         mailer=ResendMailer(),
         notifier=MemoryNotifier(),
-        storage=LocalFileStorage(cv_root),
+        storage=cv_service.DatabaseCvStorage(_get_matching_pool(), fallback=LocalFileStorage(cv_root)),
         base_url=base_url,
     )
     return context, db
@@ -185,6 +188,9 @@ class handler(BaseHTTPRequestHandler):
         if path.startswith("/api/v1/"):
             self._student_api(path)
             return
+        if path == "/api/cron/job-alerts":
+            self._cron_job_alerts()
+            return
         if path.startswith(EMPLOYER_PREFIX):
             if self.command != "POST":
                 self._send_json(405, {"detail": "Method Not Allowed"}, (("Allow", "POST"),))
@@ -222,6 +228,13 @@ class handler(BaseHTTPRequestHandler):
             "/api/v1/students/me/notifications": ("GET", self._student_notifications),
             "/api/v1/students/me/saved": ("GET", self._student_saved_list),
             "/api/v1/admin/university-requests": ("GET, POST", self._admin_university_requests),
+            "/api/v1/students/me/cv": ("GET, PUT, DELETE", self._student_cv),
+            "/api/v1/students/me/cv/file": ("GET", self._student_cv_file),
+            "/api/v1/students/me/alerts": ("GET, POST", self._student_alerts),
+            "/api/v1/admin/universities": ("GET", self._admin_universities),
+            "/api/v1/coordinator/coordinators": ("GET, POST", self._coordinator_coordinators),
+            "/api/v1/auth/invite": ("GET", self._invite_details),
+            "/api/v1/auth/accept-invite": ("POST", self._accept_invite),
         }
         route = routes.get(path)
         if route:
@@ -233,6 +246,18 @@ class handler(BaseHTTPRequestHandler):
             return
 
         parts = path.strip("/").split("/")
+        if len(parts) == 6 and parts[:5] == ["api", "v1", "students", "me", "alerts"] and parts[5].isdigit():
+            if self.command != "DELETE":
+                self._send_json(405, {"detail": "Method Not Allowed"}, (("Allow", "DELETE"),))
+                return
+            self._student_alert_delete(int(parts[5]))
+            return
+        if len(parts) == 6 and parts[:4] == ["api", "v1", "admin", "universities"] and parts[4].isdigit() and parts[5] == "coordinators":
+            if self.command not in ("GET", "POST"):
+                self._send_json(405, {"detail": "Method Not Allowed"}, (("Allow", "GET, POST"),))
+                return
+            self._admin_university_coordinators(int(parts[4]))
+            return
         if len(parts) == 6 and parts[:3] == ["api", "v1", "public"] and parts[3] == "universities" and parts[5] == "departments":
             self._student_catalog_detail(parts[4], "departments")
             return
@@ -630,6 +655,15 @@ class handler(BaseHTTPRequestHandler):
         return user_id, role
 
     def _role_call(self, callback, allowed_roles: set[str]):
+        result = self._role_run(callback, allowed_roles)
+        if result is not None:
+            self._send_json(200, result)
+
+    def _role_run(self, callback, allowed_roles: set[str]):
+        """Run callback(conn, user_id) for a signed-in, active user of an allowed role.
+
+        Returns the result, or sends the error response and returns None.
+        """
         try:
             user_id, role = self._authorized_user_id(allowed_roles)
             with self._student_connection() as conn:
@@ -644,10 +678,9 @@ class handler(BaseHTTPRequestHandler):
                     ).fetchone()
                     if account is None or account["role"] != role or account["status"] != "active":
                         raise student_service.StudentError(403, "ACCOUNT_NOT_ACTIVE", "Your account is not active.")
-                    result = callback(conn, user_id)
+                    return callback(conn, user_id)
                 finally:
                     conn.row_factory = default_row_factory
-            self._send_json(200, result)
         except student_service.StudentError as exc:
             self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
         except ConfigurationError as exc:
@@ -655,6 +688,7 @@ class handler(BaseHTTPRequestHandler):
         except psycopg.Error:
             logger.exception("Role API database request failed")
             self._send_json(503, {"error": {"code": "SERVICE_UNAVAILABLE", "message": "The service is temporarily unavailable."}})
+        return None
 
     def _admin_registrations(self):
         self._role_call(
@@ -1130,6 +1164,182 @@ class handler(BaseHTTPRequestHandler):
                     return saved_service.save(conn, student_id, listing_id)
                 return saved_service.unsave(conn, student_id, listing_id)
         self._student_call(run, authenticated=True)
+
+    # ---------- CV upload ----------
+
+    def _read_file_body(self, max_bytes: int) -> bytes:
+        """A raw upload body (not JSON), refusing anything over max_bytes."""
+        try:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            raise student_service.StudentError(400, "INVALID_CONTENT_LENGTH", "Invalid request length.") from None
+        if length <= 0:
+            raise student_service.StudentError(422, "EMPTY_CV", "Choose a file to upload.")
+        if length > max_bytes:
+            raise student_service.StudentError(413, "CV_TOO_LARGE", "Your CV must be 4 MB or smaller.")
+        return self.rfile.read(length)
+
+    def _student_cv(self):
+        try:
+            data = self._read_file_body(cv_service.MAX_CV_BYTES) if self.command == "PUT" else b""
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+        filename = parse_qs(urlsplit(self.path).query).get("filename", [None])[-1]
+
+        def run(conn, user_id):
+            student_id = student_service.student_id_for_user(conn, user_id)
+            if self.command == "GET":
+                return cv_service.cv_info(conn, student_id)
+            with conn.transaction():
+                conn.execute("SELECT set_config('app.user_id', %s, true)", (str(user_id),))
+                if self.command == "PUT":
+                    return cv_service.save_cv(conn, student_id, data, filename)
+                return cv_service.delete_cv(conn, student_id)
+        self._student_call(run, authenticated=True)
+
+    def _student_cv_file(self):
+        def run(conn, user_id):
+            return cv_service.read_cv(conn, student_service.student_id_for_user(conn, user_id))
+        cv = self._student_run(run, authenticated=True)
+        if cv is None:
+            return  # error already sent
+        body = bytes(cv["data"])
+        self.send_response(200)
+        self.send_header("Content-Type", cv["content_type"])
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(cv['filename'])}")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
+    # ---------- job alerts ----------
+
+    def _student_alerts(self):
+        try:
+            payload = self._read_json_request() if self.command == "POST" else {}
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+
+        def run(conn, user_id):
+            student_id = student_service.student_id_for_user(conn, user_id)
+            if self.command == "GET":
+                return {"alerts": alert_service.list_alerts(conn, student_id)}
+            with conn.transaction():
+                return alert_service.create_alert(conn, student_id, payload.get("filters"))
+        self._student_call(run, success_status=201 if self.command == "POST" else 200, authenticated=True)
+
+    def _student_alert_delete(self, alert_id: int):
+        def run(conn, user_id):
+            student_id = student_service.student_id_for_user(conn, user_id)
+            with conn.transaction():
+                return alert_service.delete_alert(conn, student_id, alert_id)
+        self._student_call(run, authenticated=True)
+
+    def _cron_job_alerts(self):
+        """Daily job (vercel.json "crons"). Vercel sends Authorization: Bearer $CRON_SECRET."""
+        secret = os.environ.get("CRON_SECRET")
+        if not secret:
+            self._send_json(503, {"error": {"code": "CONFIGURATION_ERROR", "message": "CRON_SECRET is not configured."}})
+            return
+        if not secrets.compare_digest(self.headers.get("Authorization", ""), f"Bearer {secret}"):
+            self._send_json(401, {"error": {"code": "UNAUTHENTICATED", "message": "Not allowed."}})
+            return
+        try:
+            self._require_email_configuration()
+        except ConfigurationError as exc:
+            self._send_json(503, {"error": {"code": "CONFIGURATION_ERROR", "message": str(exc)}})
+            return
+        site_url = self._site_url()
+        self._student_call(lambda conn, _user_id: alert_service.run_alerts(conn, self._send_email, site_url))
+
+    # ---------- coordinator invites ----------
+
+    def _send_invite(self, invite: dict, raw_token: str):
+        url = f"{self._site_url()}/accept-invite?token={quote(raw_token)}"
+        self._send_email(
+            invite["email"],
+            f"You're invited to coordinate internships for {invite['university']} on InternLink",
+            f"<p>Hello,</p><p>{escape(invite['inviter'])} invited you to join InternLink as an internship "
+            f"coordinator for <b>{escape(invite['university'])}</b>. Coordinators verify students and approve "
+            f"their placements.</p><p><a href=\"{escape(url)}\">Accept the invitation</a></p>"
+            f"<p>This link expires in {invite['days']} days. If you weren't expecting it, you can ignore this email.</p>",
+        )
+
+    def _create_invite(self, conn, user_id: int, university_id: int, payload: dict, raw_token: str) -> dict:
+        inviter = conn.execute("SELECT full_name FROM users WHERE user_id = %s", (user_id,)).fetchone()
+        with conn.transaction():
+            conn.execute("SELECT set_config('app.user_id', %s, true)", (str(user_id),))
+            return invite_service.invite_coordinator(
+                conn, university_id, payload, raw_token, inviter_name=inviter["full_name"] if inviter else "InternLink"
+            )
+
+    def _invite_flow(self, university_for, allowed_roles: set[str]):
+        """GET lists the university's coordinators; POST invites one and emails the link."""
+        try:
+            payload = self._read_json_request() if self.command == "POST" else {}
+            if self.command == "POST":
+                self._require_email_configuration()
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+        except ConfigurationError as exc:
+            self._send_json(503, {"error": {"code": "CONFIGURATION_ERROR", "message": str(exc)}})
+            return
+        raw_token = secrets.token_urlsafe(32)
+
+        def run(conn, user_id):
+            university_id = university_for(conn, user_id)
+            if self.command == "GET":
+                return {"coordinators": invite_service.list_coordinators(conn, university_id)}
+            return {"invite": self._create_invite(conn, user_id, university_id, payload, raw_token)}
+
+        result = self._role_run(run, allowed_roles)
+        if result is None:
+            return  # error already sent
+        if self.command == "GET":
+            self._send_json(200, result)
+            return
+        # The invite is saved (committed) before the email goes out.
+        invite = result["invite"]
+        try:
+            self._send_invite(invite, raw_token)
+        except ConfigurationError:
+            self._send_json(503, {"error": {"code": "EMAIL_FAILED", "message": "The invite was saved but the email couldn't be sent. Try again in a minute."}})
+            return
+        self._send_json(201, {"invited": invite["email"], "message": f"Invitation sent to {invite['email']}."})
+
+    def _admin_universities(self):
+        self._role_call(lambda conn, _user_id: {"universities": invite_service.list_verified_universities(conn)}, {"admin"})
+
+    def _admin_university_coordinators(self, university_id: int):
+        self._invite_flow(lambda conn, _user_id: university_id, {"admin"})
+
+    def _coordinator_coordinators(self):
+        def own_university(conn, user_id):
+            scope = self._coordinator_scope(conn, user_id)
+            if self.command == "POST" and scope["department_id"] is not None:
+                raise student_service.StudentError(403, "UNIVERSITY_COORDINATOR_REQUIRED", "Only a university-wide coordinator can invite colleagues.")
+            return scope["university_id"]
+        self._invite_flow(own_university, {"coordinator"})
+
+    def _invite_details(self):
+        token = parse_qs(urlsplit(self.path).query).get("token", [""])[-1]
+        self._student_call(lambda conn, _user_id: {"invite": invite_service.invite_details(conn, token)})
+
+    def _accept_invite(self):
+        try:
+            payload = self._read_json_request()
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+
+        def accept(conn, _user_id):
+            with conn.transaction():
+                return invite_service.accept_invite(conn, payload.get("token"), payload)
+        self._student_call(accept)
 
     def _student_withdraw_application(self, application_id: int):
         try:

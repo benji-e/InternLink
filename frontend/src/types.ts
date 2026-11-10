@@ -1,5 +1,5 @@
 export type Role = 'student' | 'employer' | 'university' | 'admin'
-export type Page = 'dashboard' | 'browse' | 'applications' | 'notifications' | 'profile' | 'applicants' | 'students' | 'approvals' | 'users' | 'listings' | 'messages' | 'reports' | 'catalog' | 'placed' | 'applicant' | 'verify'
+export type Page = 'dashboard' | 'browse' | 'applications' | 'notifications' | 'profile' | 'applicants' | 'students' | 'approvals' | 'users' | 'listings' | 'messages' | 'reports' | 'catalog' | 'placed' | 'applicant' | 'verify' | 'team' | 'universities'
 
 export type Opportunity = {
   id: number
@@ -46,4 +46,5 @@ export type StudentProfile = {
   skills: string[]
   interests: string[]
   completeness: number
+  hasCv: boolean
 }

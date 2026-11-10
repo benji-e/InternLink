@@ -64,6 +64,16 @@ Run the schema scripts against the new database, in this order:
 4. `04_roles.sql` if using the database roles defined by the project.
 5. `08_university_requests.sql` (students asking for a university that isn't listed yet)
 6. `09_interviews_saved.sql` (interview stage, decline reasons, saved internships)
+7. `10_cv_alerts_invites.sql` (CV uploads, job alerts, coordinator invites)
+
+Job alerts run once a day through a Vercel cron job (`vercel.json`), which calls
+`/api/cron/job-alerts`. Set a `CRON_SECRET` environment variable in Vercel
+(any long random string); Vercel sends it with each cron call and the endpoint
+refuses calls without it. Alerts and coordinator invites send email, so they
+also need `RESEND_API_KEY` and `INTERNLINK_FROM_EMAIL`.
+
+CVs are stored in the database (table `student_cvs`, at most 4 MB each because
+Vercel limits uploads to 4.5 MB), so no separate file storage is needed.
 
 Do **not** run `05_seed.sql` on a production database. It contains fixed demo
 accounts and sample records. `06_tests.sql` and `07_load_test.sql` are
@@ -185,6 +195,14 @@ coordinator and administrator accounts.
 - `GET`, `POST /api/v1/students/me/applications`
 - `POST /api/v1/students/me/applications/{id}/withdraw`
 - `GET /api/v1/students/me/saved`, `PUT` and `DELETE /api/v1/students/me/saved/{listing_id}`
+- `GET`, `PUT`, `DELETE /api/v1/students/me/cv`: CV details, upload (the file itself as
+  the request body, `?filename=` for its name; PDF or DOCX, at most 4 MB) and removal;
+  `GET /api/v1/students/me/cv/file` downloads it
+- `GET`, `POST /api/v1/students/me/alerts` (`{"filters": {...}}` with the search page's
+  `q`, `location`, `sector`, `remote`, `duration`, `my_programme`) and
+  `DELETE /api/v1/students/me/alerts/{id}`
+- `GET /api/v1/auth/invite?token=` and `POST /api/v1/auth/accept-invite` with `token`,
+  `full_name` and `password`: the page a coordinator invite email links to
 - `GET`, `POST /api/v1/students/me/applications/{id}/messages`: read the employer's
   messages and reply (only after the employer has written, while shortlisted or accepted)
 - `GET /api/v1/students/me/notifications`
@@ -196,6 +214,9 @@ coordinator and administrator accounts.
   `/api/v1/admin/audit`
 - `GET /api/v1/admin/registrations/{company|university}/{id}`: details for review
 - `POST /api/v1/admin/registrations/{company|university}/{id}`
+- `GET /api/v1/admin/universities`: verified universities with coordinator counts
+- `GET /api/v1/admin/universities/{id}/coordinators`; `POST` with `email` and optional
+  `department_id` invites a coordinator by email
 - `GET /api/v1/admin/university-requests`; `POST` with `university_name` and
   `status` (`added` or `declined`) closes the open requests for that university
 - `PATCH /api/v1/admin/users/{id}`
@@ -204,6 +225,8 @@ coordinator and administrator accounts.
 
 - `GET /api/v1/coordinator/dashboard`, `/students`, `/placements`
 - `POST /api/v1/coordinator/students/{id}`
+- `GET /api/v1/coordinator/coordinators`; `POST` with `email` and optional `department_id`
+  (university-wide coordinators only) invites a colleague
 - `POST /api/v1/coordinator/placements/{id}` with `action` (`confirmed` or `rejected`),
   `reason` (required to reject) and optional `start_date`; the end date follows from
   the internship's length

@@ -36,8 +36,11 @@ def _int(value: Any, label: str, *, low: int, high: int, default: int | None = N
     return number
 
 
-def search_opportunities(conn, filters: dict[str, str], student_id: int | None = None) -> dict:
-    """Open internships matching the filters, with sector counts for the filter panel."""
+def search_opportunities(conn, filters: dict[str, str], student_id: int | None = None, *, posted_after=None) -> dict:
+    """Open internships matching the filters, with sector counts for the filter panel.
+
+    `posted_after` (a datetime) is only for job alerts; it is never read from a URL.
+    """
     search = (filters.get("q") or filters.get("search") or "").strip()[:120]
     sector = (filters.get("sector") or "").strip()[:80]
     location = (filters.get("location") or "").strip()[:80]
@@ -73,6 +76,9 @@ def search_opportunities(conn, filters: dict[str, str], student_id: int | None =
         params.append(max_weeks)
     if closing_soon:
         clauses.append("v.application_deadline <= CURRENT_DATE + 7")
+    if posted_after is not None:
+        clauses.append("v.posted_at > %s")
+        params.append(posted_after)
     if my_programme and student_id is not None:
         clauses.append(
             "EXISTS (SELECT 1 FROM listing_programmes lp JOIN student_profiles sp "

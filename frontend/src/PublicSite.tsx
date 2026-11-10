@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import {
-  ApiError, publicApi, savedApi, studentApi,
+  alertApi, ApiError, cvApi, publicApi, savedApi, studentApi,
   type AuthUser, type ListingDetail, type ListingSummary, type SearchResult,
 } from './api'
 import { linkTo, navigate } from './router'
@@ -298,6 +298,31 @@ export function InternshipsPage({ session, search }: { session: SiteSession; sea
 
   const page = result?.page ?? 1
   const pages = result ? Math.max(1, Math.ceil(result.count / result.page_size)) : 1
+  const [alertState, setAlertState] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const [alertMessage, setAlertMessage] = useState('')
+  useEffect(() => { setAlertState('idle'); setAlertMessage('') }, [params])
+
+  /** Save the current filters as a job alert (students); visitors sign in first. */
+  async function createAlert() {
+    if (!session) {
+      navigate(`/signin?next=${encodeURIComponent(`/internships?${params}`)}`)
+      return
+    }
+    const filters: Record<string, string> = {}
+    for (const key of ['q', 'location', 'sector', 'remote', 'duration', 'my_programme']) {
+      const value = params.get(key)
+      if (value) filters[key] = value
+    }
+    setAlertState('saving')
+    try {
+      const { alert, created } = await alertApi.create(session.token, filters)
+      setAlertState('saved')
+      setAlertMessage(created ? `Job alert saved: ${alert.label}. We'll email you when new internships match.` : `You already have this alert: ${alert.label}.`)
+    } catch (reason) {
+      setAlertState('idle')
+      setAlertMessage(messageOf(reason))
+    }
+  }
 
   return (
     <SiteLayout session={session} active="browse" grey>
@@ -312,7 +337,11 @@ export function InternshipsPage({ session, search }: { session: SiteSession; sea
             {locations.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
           <button className="btn btn-primary">Search</button>
+          {(!session || isStudent) && <button type="button" className="btn" disabled={alertState === 'saving'} onClick={() => void createAlert()}>
+            {alertState === 'saved' ? 'Alert saved ✓' : 'Get alerts for this search'}
+          </button>}
         </form>
+        {alertMessage && <div className={`notice ${alertState === 'saved' ? 'is-ok' : 'is-error'}`} role="status" style={{ marginBottom: 14 }}>{alertMessage}</div>}
         <div className="browse-grid">
           <aside className="filters" aria-label="Filters">
             <div className="filters-head"><h2>Filters</h2><button className="btn-link" onClick={() => navigate('/internships', { replace: true })}>Clear all</button></div>
@@ -402,9 +431,11 @@ export function InternshipDetailPage({ session, id, onApplied }: { session: Site
       .catch((reason: unknown) => setError(messageOf(reason)))
   }
   useEffect(load, [id, token])
+  const [cvName, setCvName] = useState<string | null | undefined>(undefined)
   useEffect(() => {
     if (!token) return
     studentApi.profile(token).then((data) => setVerified(Boolean(data.profile.verified))).catch(() => undefined)
+    cvApi.info(token).then((data) => setCvName(data.cv?.filename ?? null)).catch(() => setCvName(null))
   }, [token])
 
   async function apply(event: FormEvent) {
@@ -474,6 +505,11 @@ export function InternshipDetailPage({ session, id, onApplied }: { session: Site
               <h2>Your application</h2>
               {applied ? <div className="notice is-ok" style={{ marginTop: 10 }}>You applied on {shortDate(applied.submitted_at)}. Status: {applied.status.replaceAll('_', ' ')}. <a {...linkTo('/dashboard?page=applications')}>Track it</a></div>
                 : <form className="stack" style={{ marginTop: 12 }} onSubmit={(event) => void apply(event)}>
+                  <div className="field">CV
+                    {cvName === undefined ? <small>Checking your CV…</small>
+                      : cvName ? <div className="cv-file" style={{ marginTop: 0 }}><span className="logo-box">CV</span><span style={{ flex: 1 }}>{cvName} <small className="muted">(from your profile)</small></span><a className="btn btn-sm" {...linkTo('/dashboard?page=profile')}>Change</a></div>
+                        : <div className="notice is-info">You haven't uploaded a CV. Employers often look for one. <a {...linkTo('/dashboard?page=profile')}>Upload your CV</a></div>}
+                  </div>
                   <label className="field">Cover note <small>Optional</small><textarea maxLength={2000} placeholder="Why are you interested in this role?" value={note} onChange={(event) => setNote(event.target.value)} /></label>
                   {applyError && <div className="notice is-error" role="alert">{applyError}</div>}
                   {verified === false && <div className="notice">Your university needs to verify your profile before you can apply.</div>}

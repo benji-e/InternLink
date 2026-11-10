@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState, type DragEvent, type FormEvent, type ReactNode } from 'react'
-import { adminApi, employerRequest, roleApi, type RegistrationDetail, type UniversityRequest } from './api'
+import {
+  adminApi, coordinatorTeamApi, employerDownload, employerRequest, roleApi, studentApi,
+  type CatalogItem, type CoordinatorRow, type RegistrationDetail, type UniversityRequest, type VerifiedUniversity,
+} from './api'
 import { initialsOf, messageOf, shortDate, Wordmark } from './PublicSite'
 import './site.css'
 
@@ -316,11 +319,12 @@ export function EmployerApplicant({ token, applicationId, order, onOpen, onBack,
 
   async function downloadCv() {
     try {
-      const data = await employerRequest<string>('download_cv', token, { application_id: applicationId })
-      const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0))
+      // The employer API sends the file itself, not JSON.
+      const file = await employerDownload('download_cv', token, { application_id: applicationId })
+      const bytes = new Uint8Array(await file.slice(0, 4).arrayBuffer())
       const isPdf = bytes[0] === 0x25 && bytes[1] === 0x50
       const link = document.createElement('a')
-      link.href = URL.createObjectURL(new Blob([bytes], { type: isPdf ? 'application/pdf' : 'application/octet-stream' }))
+      link.href = URL.createObjectURL(new Blob([file], { type: isPdf ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }))
       link.download = `${detail?.profile.full_name ?? 'applicant'} CV.${isPdf ? 'pdf' : 'docx'}`
       link.click()
       URL.revokeObjectURL(link.href)
@@ -778,6 +782,142 @@ export function AdminRequests({ token, registrations, onReload, toast }: { token
           </section>
         </div>
       )}
+    </>
+  )
+}
+
+/* ------------------------------------------------- coordinator invites */
+
+/** A university's coordinators, with a form to invite another by email. */
+function CoordinatorTeam({ domain, departments, load, invite, canInvite, toast }: {
+  domain: string; departments: CatalogItem[]; load: () => Promise<CoordinatorRow[]>
+  invite: (email: string, departmentId?: number) => Promise<string>; canInvite: boolean; toast: (message: string) => void
+}) {
+  const [rows, setRows] = useState<CoordinatorRow[] | null>(null)
+  const [email, setEmail] = useState('')
+  const [departmentId, setDepartmentId] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  function refresh() {
+    load().then(setRows).catch((reason: unknown) => setError(messageOf(reason)))
+  }
+  useEffect(refresh, [load])
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      toast(await invite(email.trim(), departmentId ? Number(departmentId) : undefined))
+      setEmail('')
+      refresh()
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <section className="card" style={{ padding: 0, marginBottom: 16 }}>
+        {!rows && !error && <div className="empty">Loading…</div>}
+        {rows?.length === 0 && <div className="empty">No coordinators yet.</div>}
+        {!!rows?.length && <div style={{ overflowX: 'auto' }}><table className="s-table">
+          <thead><tr><th>Name</th><th>Email</th><th>Covers</th><th>Status</th></tr></thead>
+          <tbody>{rows.map((row) => (
+            <tr key={row.user_id}>
+              <td>{row.invited ? <span className="muted">Not joined yet</span> : row.full_name}</td>
+              <td>{row.email}</td>
+              <td>{row.department ?? 'Whole university'}</td>
+              <td><span className={`status-pill ${row.status === 'active' ? 'is-green' : ''}`}>{row.invited ? `Invited ${shortDate(row.created_at)}` : row.status}</span></td>
+            </tr>
+          ))}</tbody>
+        </table></div>}
+      </section>
+      {canInvite ? <section className="card">
+        <h2>Invite a coordinator</h2>
+        <p className="muted" style={{ fontSize: 14, marginTop: 4 }}>They get an email with a link to set their name and password. The link works for 7 days.</p>
+        <form className="stack" onSubmit={(event) => void submit(event)}>
+          <div className="field-pair">
+            <label className="field">Their university email<input type="email" required placeholder={`name@${domain}`} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+            <label className="field">Covers
+              <select value={departmentId} onChange={(event) => setDepartmentId(event.target.value)}>
+                <option value="">Whole university</option>
+                {departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </label>
+          </div>
+          {error && <div className="notice is-error" role="alert">{error}</div>}
+          <div><button className="btn btn-primary" disabled={busy}>{busy ? 'Sending…' : 'Send invite'}</button></div>
+        </form>
+      </section> : <div className="notice is-info">Only a coordinator for the whole university can invite colleagues.</div>}
+      {error && !canInvite && <div className="notice is-error" style={{ marginTop: 10 }}>{error}</div>}
+    </>
+  )
+}
+
+/** Coordinator's own team page. */
+export function CoordinatorTeamPage({ token, toast }: { token: string; toast: (message: string) => void }) {
+  const [departments, setDepartments] = useState<CatalogItem[]>([])
+  const [canInvite, setCanInvite] = useState(false)
+  useEffect(() => {
+    roleApi.coordinatorCatalog(token).then((catalog) => {
+      setDepartments(catalog.departments)
+      setCanInvite(catalog.can_add_departments)  // true only for university-wide coordinators
+    }).catch(() => undefined)
+  }, [token])
+  const load = useMemo(() => () => coordinatorTeamApi.list(token).then((result) => result.coordinators), [token])
+  const invite = (email: string, departmentId?: number) => coordinatorTeamApi.invite(token, email, departmentId).then((result) => result.message)
+  return (
+    <>
+      <h1 style={{ marginBottom: 16 }}>Coordinators</h1>
+      <CoordinatorTeam domain="your university's domain" departments={departments} load={load} invite={invite} canInvite={canInvite} toast={toast} />
+    </>
+  )
+}
+
+/** Admin: verified universities and their coordinators. */
+export function AdminUniversities({ token, toast }: { token: string; toast: (message: string) => void }) {
+  const [universities, setUniversities] = useState<VerifiedUniversity[] | null>(null)
+  const [selected, setSelected] = useState<number | null>(null)
+  const [departments, setDepartments] = useState<CatalogItem[]>([])
+  const [error, setError] = useState('')
+  useEffect(() => {
+    adminApi.universities(token).then((result) => setUniversities(result.universities)).catch((reason: unknown) => setError(messageOf(reason)))
+  }, [token])
+  const current = universities?.find((item) => item.university_id === selected) ?? universities?.[0]
+  useEffect(() => {
+    setDepartments([])
+    if (current) studentApi.departments(current.university_id).then((result) => setDepartments(result.departments)).catch(() => undefined)
+  }, [current?.university_id])
+  const load = useMemo(() => () => current ? adminApi.coordinators(token, current.university_id).then((result) => result.coordinators) : Promise.resolve([]), [token, current?.university_id])
+
+  return (
+    <>
+      <h1 style={{ marginBottom: 16 }}>Universities</h1>
+      {error && <div className="notice is-error">{error}</div>}
+      {universities?.length === 0 && <div className="card empty">No verified universities yet.</div>}
+      {current && <div className="requests-grid">
+        <div className="request-list" role="list">
+          {universities?.map((item) => (
+            <button key={item.university_id} role="listitem" className={item === current ? 'is-selected' : ''} onClick={() => setSelected(item.university_id)}>
+              <span><b>{item.name}</b><small>@{item.email_domain} · {item.students} student{item.students === 1 ? '' : 's'}</small></span>
+              <em className={item.active_coordinators === 0 ? 'amber' : ''}>{item.active_coordinators} coordinator{item.active_coordinators === 1 ? '' : 's'}</em>
+            </button>
+          ))}
+        </div>
+        <div>
+          <h2 style={{ marginBottom: 12 }}>{current.name}</h2>
+          {current.active_coordinators === 0 && <div className="notice" style={{ marginBottom: 12 }}>This university has no active coordinator, so nobody can verify its students. Invite one below.</div>}
+          <CoordinatorTeam key={current.university_id} domain={current.email_domain} departments={departments} load={load} canInvite toast={toast}
+            invite={(email, departmentId) => adminApi.invite(token, current.university_id, email, departmentId).then((result) => {
+              adminApi.universities(token).then((data) => setUniversities(data.universities)).catch(() => undefined)
+              return result.message
+            })} />
+        </div>
+      </div>}
     </>
   )
 }

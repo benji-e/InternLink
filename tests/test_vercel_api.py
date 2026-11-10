@@ -127,6 +127,25 @@ class VercelEntryPointTests(ServerTestCase):
             self.assertEqual(status, 405, path)
             self.assertEqual(headers["Allow"], "POST")
 
+    def test_alert_cron_needs_its_secret(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CRON_SECRET", None)
+            status, _, _ = self.request("/api/cron/job-alerts")
+            self.assertEqual(status, 503)
+        with patch.dict(os.environ, {"CRON_SECRET": "cron-secret-value"}):
+            status, _, _ = self.request("/api/cron/job-alerts", headers={"Authorization": "Bearer wrong"})
+            self.assertEqual(status, 401)
+
+    def test_cv_upload_is_size_checked_before_reading(self):
+        status, _, body = self.request(
+            "/api/v1/students/me/cv",
+            method="PUT",
+            body=b"x",
+            headers={"Content-Length": str(5 * 1024 * 1024), "Content-Type": "application/pdf"},
+        )
+        self.assertEqual(status, 413)
+        self.assertEqual(json.loads(body)["error"]["code"], "CV_TOO_LARGE")
+
     def test_unknown_route_returns_not_found(self):
         status, _, body = self.request("/not-an-api-route")
         self.assertEqual(status, 404)
