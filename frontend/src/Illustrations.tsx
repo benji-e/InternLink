@@ -26,6 +26,67 @@ function Frame({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
+/** Home page hero: a mentor and a student at a table, looking at a matched internship together. */
+export function HeroArt() {
+  return (
+    <svg className="hero-art" viewBox="0 0 540 330" role="img" aria-label="A mentor helping a student find an internship on a laptop" preserveAspectRatio="xMidYMid slice">
+      <rect width="540" height="330" fill="#e9eef8" />
+      {/* window with a city outline */}
+      <rect x="320" y="34" width="176" height="120" rx="6" fill={PAPER} />
+      <path d="M326 148 V118 h18 v-14 h16 v22 h14 V96 h20 v52 h12 v-30 h16 v-12 h18 v42 h16 V112 h20 v36 Z" fill={BLUE_SOFT} />
+      <line x1="408" y1="34" x2="408" y2="154" stroke="#e9eef8" strokeWidth="4" />
+      {/* plant */}
+      <rect x="40" y="208" width="34" height="34" rx="4" fill={SUN} />
+      <path d="M57 208 C40 186 34 168 46 154 C56 170 58 188 57 208 Z" fill="#2f7d4f" />
+      <path d="M57 208 C70 184 82 172 92 168 C88 186 74 200 57 208 Z" fill="#3c9a62" />
+      {/* floor */}
+      <rect x="0" y="292" width="540" height="38" fill={GROUND} />
+
+      {/* mentor (left) */}
+      <rect x="118" y="230" width="16" height="64" rx="6" fill={INK} />
+      <rect x="140" y="230" width="16" height="64" rx="6" fill={INK} />
+      <path d="M106 160 Q137 136 168 160 L172 236 L102 236 Z" fill={BLUE} />
+      <path d="M131 148 L137 166 L143 148 Z" fill={PAPER} />
+      <circle cx="137" cy="118" r="24" fill={SKIN_DARK} />
+      <path d="M113 112 Q116 90 137 90 Q159 90 161 110 Q151 102 137 102 Q122 102 113 112 Z" fill={HAIR} />
+      {/* mentor arm pointing at the screen */}
+      <path d="M164 178 Q196 184 222 168" stroke={SKIN_DARK} strokeWidth="13" strokeLinecap="round" fill="none" />
+
+      {/* table */}
+      <rect x="180" y="214" width="270" height="14" rx="4" fill={INK} />
+      <rect x="196" y="228" width="12" height="66" fill={INK} />
+      <rect x="422" y="228" width="12" height="66" fill={INK} />
+      {/* laptop */}
+      <rect x="222" y="122" width="132" height="88" rx="8" fill={INK} />
+      <rect x="230" y="130" width="116" height="72" rx="4" fill={PAPER} />
+      <rect x="210" y="208" width="156" height="8" rx="4" fill={INK} />
+      {/* match card on screen */}
+      <rect x="240" y="140" width="20" height="20" rx="4" fill={BLUE_SOFT} />
+      <rect x="268" y="142" width="50" height="6" rx="3" fill={INK} />
+      <rect x="268" y="153" width="34" height="5" rx="2.5" fill="#b9b9b3" />
+      <rect x="240" y="172" width="96" height="7" rx="3.5" fill={BLUE_SOFT} />
+      <rect x="240" y="172" width="70" height="7" rx="3.5" fill={BLUE} />
+      <rect x="240" y="186" width="40" height="8" rx="4" fill={BLUE} />
+      <circle cx="330" cy="148" r="10" fill={SUN} />
+      <path d="M325 148 l3.5 3.5 l6 -7" stroke={INK} strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      {/* mug and notebook */}
+      <rect x="384" y="194" width="20" height="20" rx="4" fill={PAPER} stroke={INK} strokeWidth="2.5" />
+      <path d="M404 199 q8 0 8 6 q0 6 -8 6" stroke={INK} strokeWidth="2.5" fill="none" />
+      <rect x="412" y="204" width="30" height="10" rx="2" fill={BLUE_SOFT} />
+
+      {/* student (right) */}
+      <rect x="452" y="234" width="16" height="60" rx="6" fill={INK} />
+      <rect x="474" y="234" width="16" height="60" rx="6" fill={INK} />
+      <path d="M438 168 Q470 146 502 168 L506 240 L434 240 Z" fill={SUN} />
+      <circle cx="470" cy="126" r="24" fill={SKIN} />
+      <path d="M446 124 Q444 96 470 96 Q496 96 494 124 Q492 108 470 107 Q450 108 446 124 Z" fill={HAIR} />
+      <circle cx="470" cy="100" r="12" fill={HAIR} />
+      {/* student arm resting on the table */}
+      <path d="M442 186 Q426 204 410 210" stroke={SKIN} strokeWidth="13" strokeLinecap="round" fill="none" />
+    </svg>
+  )
+}
+
 /** A student with a backpack, holding a laptop that shows a matched internship. */
 export function StudentArt() {
   return (

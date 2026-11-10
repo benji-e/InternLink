@@ -5,7 +5,7 @@ import {
   type AuthUser, type ListingDetail, type ListingSummary, type SearchResult,
 } from './api'
 import { SuggestCompany } from './CompanyPages'
-import { EmployerArt, StudentArt, UniversityArt } from './Illustrations'
+import { EmployerArt, HeroArt, StudentArt, UniversityArt } from './Illustrations'
 import { linkTo, navigate } from './router'
 import './site.css'
 
@@ -193,7 +193,7 @@ export function HomePage({ session }: { session: SiteSession }) {
             </form>
             <div className="popular">Popular: {POPULAR.map((item) => <button key={item} type="button" onClick={() => search(undefined, item)}>{item}</button>)}</div>
           </div>
-          <div className="placeholder-box hero-photo" role="img" aria-label="Students working with a mentor">Students working with a mentor</div>
+          <div className="hero-photo"><HeroArt /></div>
         </div>
       </section>
 
