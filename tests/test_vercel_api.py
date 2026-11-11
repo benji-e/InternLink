@@ -177,7 +177,8 @@ class AccountEndpointTests(ServerTestCase):
             "/api/v1/auth/resend-verification",
             "/api/v1/auth/register-university",
         )
-        with patch.dict(os.environ, {"RESEND_API_KEY": "", "INTERNLINK_FROM_EMAIL": ""}):
+        no_email = {"RESEND_API_KEY": "", "INTERNLINK_FROM_EMAIL": "", "SMTP_USER": "", "SMTP_PASSWORD": ""}
+        with patch.dict(os.environ, no_email):
             for path in paths:
                 with self.subTest(path=path):
                     status, _, body = self.post_json(path, {"email": "someone@example.com"})

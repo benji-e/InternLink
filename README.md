@@ -71,7 +71,7 @@ Job alerts run once a day through a Vercel cron job (`vercel.json`), which calls
 `/api/cron/job-alerts`. Set a `CRON_SECRET` environment variable in Vercel
 (any long random string); Vercel sends it with each cron call and the endpoint
 refuses calls without it. Alerts and coordinator invites send email, so they
-also need `RESEND_API_KEY` and `INTERNLINK_FROM_EMAIL`.
+also need email settings (Gmail or Resend, see below).
 
 CVs are stored in the database (table `student_cvs`, at most 4 MB each because
 Vercel limits uploads to 4.5 MB), so no separate file storage is needed.
@@ -90,10 +90,28 @@ Production, Preview and Development as appropriate:
 |---|---:|---|
 | `INTERNLINK_DSN` | Yes | PostgreSQL connection string for the shared application database. Use the provider's TLS-enabled connection string. |
 | `INTERNLINK_JWT_SECRET` | Yes | At least 32 random characters; signs access tokens for all roles. |
-| `RESEND_API_KEY` | For registration email | Resend API key for verification email. |
-| `INTERNLINK_FROM_EMAIL` | For registration email | Verified sender address in Resend. |
-| `INTERNLINK_PUBLIC_BASE_URL` | Recommended | Public deployment origin used to construct email verification links. Defaults to the Vercel deployment URL. |
+| `SMTP_USER` | For email (Gmail option) | The Gmail address that sends InternLink's emails. |
+| `SMTP_PASSWORD` | For email (Gmail option) | A Gmail **app password** for that account (not its normal password). |
+| `SMTP_HOST` / `SMTP_PORT` | Optional | Another SMTP server. Defaults to `smtp.gmail.com` and `587`. |
+| `RESEND_API_KEY` | For email (Resend option) | Resend API key. Used only when the Gmail settings are not set. |
+| `INTERNLINK_FROM_EMAIL` | For Resend; optional for Gmail | Sender address. Must be verified in Resend. With Gmail it defaults to `SMTP_USER`. |
+| `INTERNLINK_PUBLIC_BASE_URL` | Recommended | Public site address used in email links, for example `https://internlink.vercel.app`. Without it, links point at the deployment's own URL, which may be behind Vercel's login. |
 | `INTERNLINK_CV_ROOT` | Optional/local only | Private local CV directory. Vercel's filesystem is not durable storage. |
+
+Sign-up, password reset, job alerts and coordinator invites all send email, so
+one of the two email options must be set up. **Gmail is the quickest** and needs
+no domain:
+
+1. Sign in to the Gmail account that will send the emails (a team account such
+   as `internlink.team@gmail.com` is best).
+2. Turn on 2-Step Verification at <https://myaccount.google.com/security>.
+3. Create an app password at <https://myaccount.google.com/apppasswords>
+   (name it "InternLink"). Google shows 16 letters.
+4. In Vercel, set `SMTP_USER` to the Gmail address and `SMTP_PASSWORD` to the
+   16 letters (spaces are fine), set `INTERNLINK_PUBLIC_BASE_URL`, and redeploy.
+
+Gmail allows about 500 emails a day, which is plenty for a pilot. For more, use
+Resend with a verified domain instead.
 
 Generate a signing secret locally instead of reusing a checked-in or example
 value:
@@ -297,15 +315,15 @@ function emulator from the repository root:
 ```powershell
 $env:INTERNLINK_DSN = "postgresql://postgres@localhost:5432/internlink"
 $env:INTERNLINK_JWT_SECRET = "<a random secret of at least 32 characters>"
-$env:RESEND_API_KEY = "<Resend API key>"
-$env:INTERNLINK_FROM_EMAIL = "<verified sender address>"
+$env:SMTP_USER = "<Gmail address>"
+$env:SMTP_PASSWORD = "<Gmail app password>"
 vercel dev --listen 3000
 ```
 
 Vite's development proxy forwards `/api/*` requests to `http://127.0.0.1:3000`.
 Apply the SQL migrations and bootstrap an account before signing in. Student
-registration will send an email and therefore requires a working Resend
-configuration.
+registration sends an email and therefore needs working email settings (Gmail
+or Resend).
 
 ## Tests and validation
 

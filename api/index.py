@@ -15,8 +15,6 @@ from http.server import BaseHTTPRequestHandler
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
-from urllib.error import HTTPError, URLError
-from urllib.request import Request as URLRequest, urlopen
 
 import jwt
 import psycopg
@@ -45,6 +43,7 @@ from student_module import alerts as alert_service
 from student_module import companies as company_service
 from student_module import cv as cv_service
 from student_module import invites as invite_service
+from student_module import mailer
 from student_module import saved as saved_service
 from student_module import service as student_service
 
@@ -62,33 +61,16 @@ class ConfigurationError(RuntimeError):
     """Raised when an API's required Vercel environment is incomplete."""
 
 
-class ResendMailer:
-    """Deliver employer verification messages through the configured Resend account."""
+class EmployerMailer:
+    """Deliver employer verification messages through Gmail or Resend (see student_module/mailer.py)."""
 
     def send(self, recipient: str, subject: str, body: str) -> None:
-        api_key = os.environ.get("RESEND_API_KEY")
-        from_email = os.environ.get("INTERNLINK_FROM_EMAIL")
-        if not api_key or not from_email:
-            raise ConfigurationError("Email requires RESEND_API_KEY and INTERNLINK_FROM_EMAIL.")
-        data = json.dumps(
-            {
-                "from": from_email,
-                "to": [recipient],
-                "subject": subject,
-                "html": f'<p>Welcome to InternLink.</p><p><a href="{escape(body)}">Verify your email address</a></p>',
-            }
-        ).encode("utf-8")
-        request = URLRequest(
-            "https://api.resend.com/emails",
-            data=data,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
+        html = f'<p>Welcome to InternLink.</p><p><a href="{escape(body)}">Verify your email address</a></p>'
         try:
-            with urlopen(request, timeout=8) as response:
-                if response.status >= 300:
-                    raise RuntimeError(f"Email provider returned HTTP {response.status}")
-        except (HTTPError, URLError, TimeoutError, OSError, RuntimeError) as exc:
+            mailer.send(recipient, subject, html)
+        except mailer.EmailNotConfigured as exc:
+            raise ConfigurationError(str(exc)) from exc
+        except mailer.EmailFailed as exc:
             logger.exception("Could not send employer email verification")
             raise ConfigurationError("Could not send the verification email. Please try again later.") from exc
 
@@ -146,7 +128,7 @@ def _build_employer_context() -> tuple[AppContext, PostgresDatabase]:
     context = AppContext(
         db=db,
         auth=ReferenceTokenService(secret),
-        mailer=ResendMailer(),
+        mailer=EmployerMailer(),
         notifier=MemoryNotifier(),
         storage=cv_service.DatabaseCvStorage(_get_matching_pool(), fallback=LocalFileStorage(cv_root)),
         base_url=base_url,
@@ -573,8 +555,8 @@ class handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _require_email_configuration():
-        if not os.environ.get("RESEND_API_KEY") or not os.environ.get("INTERNLINK_FROM_EMAIL"):
-            raise ConfigurationError("Sending email requires RESEND_API_KEY and INTERNLINK_FROM_EMAIL.")
+        if not mailer.is_configured():
+            raise ConfigurationError(mailer.NOT_CONFIGURED_MESSAGE)
 
     @classmethod
     def _send_verification_email(cls, email: str, name: str, verification_url: str):
@@ -589,29 +571,11 @@ class handler(BaseHTTPRequestHandler):
     @classmethod
     def _send_email(cls, email: str, subject: str, html: str):
         cls._require_email_configuration()
-        data = json.dumps(
-            {
-                "from": os.environ["INTERNLINK_FROM_EMAIL"],
-                "to": [email],
-                "subject": subject,
-                "html": html,
-            }
-        ).encode("utf-8")
-        api_key = os.environ["RESEND_API_KEY"]
-        request = URLRequest(
-            "https://api.resend.com/emails",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
         try:
-            with urlopen(request, timeout=8) as response:
-                if response.status >= 300:
-                    raise RuntimeError(f"Email provider returned HTTP {response.status}")
-        except (HTTPError, URLError, TimeoutError, OSError, RuntimeError) as exc:
+            mailer.send(email, subject, html)
+        except mailer.EmailNotConfigured as exc:
+            raise ConfigurationError(str(exc)) from exc
+        except mailer.EmailFailed as exc:
             logger.exception("Could not send an account email")
             raise ConfigurationError("Could not send the email. Please try again later.") from exc
 
