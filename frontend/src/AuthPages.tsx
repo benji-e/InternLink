@@ -1,23 +1,23 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import {
-  ArrowLeft, ArrowRight, Building2, Check, CheckCircle2, CircleHelp, GraduationCap, KeyRound, Mail, School, ShieldCheck,
-} from 'lucide-react'
-import { accountApi, ApiError, studentApi, type AuthUser, type CatalogItem, type University } from './api'
-import { BrandMark } from './BrandMark'
+import { Mail } from 'lucide-react'
+import { accountApi, ApiError, publicApi, studentApi, type AuthUser, type ProgrammeOption, type University } from './api'
+import { linkTo, navigate } from './router'
+import { Wordmark } from './PublicSite'
+import './site.css'
 
 export type Session = { token: string; user: AuthUser }
-type AccountType = 'student' | 'employer' | 'university'
+export type AccountType = 'student' | 'employer' | 'university'
 
 type View =
   | { name: 'login'; notice?: string }
-  | { name: 'choose' }
-  | { name: AccountType }
+  | { name: 'signup'; type: AccountType }
   | { name: 'forgot' }
   | { name: 'reset'; token: string }
-  | { name: 'sent'; title: string; message: string; email?: string }
+  | { name: 'sent'; message: string; email?: string; type?: AccountType }
+  | { name: 'reset-sent'; message: string }
 
 /** Pages reached from links in our emails. */
-const AUTH_LINK_PATHS = ['/verify', '/verify-email', '/reset-password', '/signup']
+const AUTH_LINK_PATHS = ['/verify', '/verify-email', '/reset-password']
 
 export function isAuthLinkPath(pathname = window.location.pathname) {
   return AUTH_LINK_PATHS.includes(pathname.replace(/\/+$/, ''))
@@ -31,16 +31,18 @@ function fieldErrors(error: unknown) {
   return error instanceof ApiError ? error.fields : {}
 }
 
-/** Reads an email link (verify, reset, sign-up) and clears it from the address bar. */
+function accountType(value: string | null): AccountType {
+  return value === 'employer' || value === 'university' ? value : 'student'
+}
+
+/** Reads an email link (verify, reset) and replaces it with the sign-in page. */
 function useAuthLink(setView: (view: View) => void) {
   useEffect(() => {
     const path = window.location.pathname.replace(/\/+$/, '')
     const token = new URLSearchParams(window.location.search).get('token') ?? ''
     if (!AUTH_LINK_PATHS.includes(path)) return
-    window.history.replaceState({}, '', '/')
-    if (path === '/signup') {
-      setView({ name: 'choose' })
-    } else if (path === '/reset-password') {
+    navigate('/signin', { replace: true })
+    if (path === '/reset-password') {
       setView(token ? { name: 'reset', token } : { name: 'login', notice: 'That reset link is incomplete. Request a new one.' })
     } else if (!token) {
       setView({ name: 'login', notice: 'That confirmation link is incomplete.' })
@@ -61,94 +63,56 @@ function useAuthLink(setView: (view: View) => void) {
   }, [setView])
 }
 
-export function AuthGate({ onLogin, toast }: { onLogin: (session: Session) => void; toast: string }) {
-  const [view, setView] = useState<View>({ name: 'login' })
+/** Sign-in, sign-up and password recovery. `path` is /signin or /signup. */
+export function AuthGate({ path, search, onLogin }: { path: string; search: string; onLogin: (session: Session) => void }) {
+  const params = new URLSearchParams(search)
+  const initial: View = path === '/signup' ? { name: 'signup', type: accountType(params.get('type')) } : { name: 'login' }
+  const [view, setView] = useState<View>(initial)
   useAuthLink(setView)
-  const toLogin = (notice?: string) => setView({ name: 'login', notice })
-  const sent = (title: string, message: string, email?: string) => setView({ name: 'sent', title, message, email })
 
-  let card: ReactNode
-  switch (view.name) {
-    case 'choose':
-      card = <ChooseAccount onBack={() => toLogin()} onChoose={(type) => setView({ name: type })} />
-      break
-    case 'student':
-      card = <StudentForm onBack={() => setView({ name: 'choose' })} onDone={(message, email) => sent('Check your inbox', message, email)} />
-      break
-    case 'employer':
-      card = <EmployerForm onBack={() => setView({ name: 'choose' })} onDone={(message, email) => sent('Check your inbox', message, email)} />
-      break
-    case 'university':
-      card = <UniversityForm onBack={() => setView({ name: 'choose' })} onDone={(message, email) => sent('Check your inbox', message, email)} />
-      break
-    case 'forgot':
-      card = <ForgotForm onBack={() => toLogin()} onDone={(message) => sent('Check your inbox', message)} />
-      break
-    case 'reset':
-      card = <ResetForm token={view.token} onBack={() => toLogin()} onDone={(message) => toLogin(message)} />
-      break
-    case 'sent':
-      card = <SentPanel title={view.title} message={view.message} email={view.email} onBack={() => toLogin()} />
-      break
-    default:
-      card = <LoginForm notice={view.notice} onLogin={onLogin} onRegister={() => setView({ name: 'choose' })} onForgot={() => setView({ name: 'forgot' })} />
-  }
+  // Follow header links (Sign in / Create account) while this page is open.
+  useEffect(() => {
+    if (path === '/signup') setView((current) => current.name === 'signup' || current.name === 'sent' ? current : { name: 'signup', type: accountType(params.get('type')) })
+    else if (path === '/signin') setView((current) => current.name === 'signup' ? { name: 'login' } : current)
+  }, [path])
 
+  const isSignup = view.name === 'signup' || view.name === 'sent'
   return (
-    <div className="auth-page">
-      <header className="auth-topbar"><BrandMark /><span className="auth-top-note">Your next opportunity starts here</span></header>
-      <main className="auth-layout">
-        <section className="auth-story">
-          <span className="eyebrow"><span className="eyebrow-dot" /> INTERNSHIPS. OPPORTUNITY. GROWTH.</span>
-          <h1>Make your next move<br /><em>count.</em></h1>
-          <p>One trusted place to find internships, connect with employers and turn your education into experience.</p>
-          <div className="story-points">
-            <div><span className="story-check"><Check size={15} /></span><span><b>Students</b><small>Personalised internship recommendations</small></span></div>
-            <div><span className="story-check"><Check size={15} /></span><span><b>Employers</b><small>Post internships and review ranked applicants</small></span></div>
-            <div><span className="story-check"><Check size={15} /></span><span><b>Universities</b><small>Verify students and approve placements</small></span></div>
+    <div className="site is-grey">
+      <header className="site-header">
+        <div className="site-container site-header-inner">
+          <Wordmark />
+          <div className="site-header-actions" style={{ fontSize: 15 }}>
+            {isSignup ? <span>Already have an account? <a {...linkTo('/signin')}>Sign in</a></span>
+              : <span>New to InternLink? <a {...linkTo('/signup')}>Create account</a></span>}
           </div>
-          <div className="auth-story-foot"><ShieldCheck size={16} /> A safer bridge between campus and career.</div>
-        </section>
-        <section className="auth-card">
-          {card}
-          {toast && <div className="auth-message"><CircleHelp size={16} />{toast}</div>}
-        </section>
+        </div>
+      </header>
+      <main className="site-main">
+        <div className="site-container signup-wrap">
+          {view.name === 'signup' && <SignUp type={view.type} onType={(type) => { setView({ name: 'signup', type }); navigate(`/signup?type=${type}`, { replace: true }) }} onDone={(message, email) => setView({ name: 'sent', message, email, type: view.type })} />}
+          {view.name === 'sent' && <SentStep message={view.message} email={view.email} onChange={() => setView({ name: 'signup', type: view.type ?? 'student' })} />}
+          {view.name === 'login' && <div className="auth-single"><LoginForm notice={view.notice} onLogin={onLogin} onForgot={() => setView({ name: 'forgot' })} /></div>}
+          {view.name === 'forgot' && <div className="auth-single"><ForgotForm onBack={() => setView({ name: 'login' })} onDone={(message) => setView({ name: 'reset-sent', message })} /></div>}
+          {view.name === 'reset-sent' && <div className="auth-single card"><div className="mail-badge"><Mail size={22} /></div><h2>Check your inbox</h2><p className="muted">{view.message}</p><button className="btn" onClick={() => setView({ name: 'login' })}>Back to sign in</button></div>}
+          {view.name === 'reset' && <div className="auth-single"><ResetForm token={view.token} onBack={() => setView({ name: 'login' })} onDone={(message) => setView({ name: 'login', notice: message })} /></div>}
+        </div>
       </main>
-      <footer className="auth-footer">
-        <span>© 2026 InternLink Uganda</span>
-        <span>Secure sign-in for students, employers, coordinators and administrators</span>
-      </footer>
     </div>
   )
 }
 
-function CardHeading({ icon, label, title, subtitle }: { icon: ReactNode; label: string; title: string; subtitle: string }) {
+function Field({ label, error, hint, children }: { label: ReactNode; error?: string; hint?: ReactNode; children: ReactNode }) {
   return (
-    <>
-      <div className="auth-card-heading"><span className="auth-icon">{icon}</span><span className="tiny-label">{label}</span></div>
-      <h2>{title}</h2>
-      <p className="auth-subtitle">{subtitle}</p>
-    </>
-  )
-}
-
-function BackLink({ onClick, children = 'Back' }: { onClick: () => void; children?: ReactNode }) {
-  return <button type="button" className="back-link" onClick={onClick}><ArrowLeft size={15} /> {children}</button>
-}
-
-function Field({ label, error, hint, children }: { label: string; error?: string; hint?: ReactNode; children: ReactNode }) {
-  return (
-    <label>
+    <label className="field">
       {label}
       {children}
-      {error ? <small className="field-error">{error}</small> : hint ? <small>{hint}</small> : null}
+      {error ? <small style={{ color: 'var(--s-red)' }}>{error}</small> : hint ? <small>{hint}</small> : null}
     </label>
   )
 }
 
-function LoginForm({ notice, onLogin, onRegister, onForgot }: {
-  notice?: string; onLogin: (session: Session) => void; onRegister: () => void; onForgot: () => void
-}) {
+function LoginForm({ notice, onLogin, onForgot }: { notice?: string; onLogin: (session: Session) => void; onForgot: () => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -182,105 +146,133 @@ function LoginForm({ notice, onLogin, onRegister, onForgot }: {
   }
 
   return (
-    <>
-      <CardHeading icon={<GraduationCap size={20} />} label="INTERNLINK PORTAL" title="Welcome back" subtitle="Sign in to continue to your InternLink workspace." />
-      {notice && <div className="notice-panel" role="status"><CheckCircle2 size={16} />{notice}</div>}
-      <form className="auth-form" onSubmit={(event) => void submit(event)}>
-        <label>Email address<input type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-        <label>Password<input type="password" autoComplete="current-password" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-        <div className="auth-form-row"><span>Use your registered email address</span><button type="button" className="text-button" onClick={onForgot}>Forgot password?</button></div>
-        {error && <div className="form-error" role="alert">{error}</div>}
-        {unconfirmed && !resent && <button type="button" className="button button-secondary full-button" onClick={() => void resend()}><Mail size={15} /> Send a new confirmation email</button>}
-        {resent && <div className="notice-panel" role="status"><Mail size={16} />{resent}</div>}
-        <button className="button button-primary full-button" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'} <ArrowRight size={16} /></button>
+    <section className="card">
+      <h1 className="signup-title" style={{ fontSize: 28 }}>Sign in</h1>
+      <p className="muted" style={{ marginTop: 0 }}>Welcome back to InternLink.</p>
+      {notice && <div className="notice is-ok" role="status" style={{ marginBottom: 12 }}>{notice}</div>}
+      <form className="stack" onSubmit={(event) => void submit(event)}>
+        <Field label="Email"><input type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} required /></Field>
+        <Field label={<span style={{ display: 'flex', justifyContent: 'space-between' }}>Password <button type="button" className="btn-link" style={{ fontSize: 13 }} onClick={onForgot}>Forgot password?</button></span>}>
+          <input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+        </Field>
+        {error && <div className="notice is-error" role="alert">{error}</div>}
+        {unconfirmed && !resent && <button type="button" className="btn" onClick={() => void resend()}><Mail size={15} /> Send a new confirmation email</button>}
+        {resent && <div className="notice is-info" role="status">{resent}</div>}
+        <button className="btn btn-primary btn-block" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
       </form>
-      <div className="auth-register-line">New to InternLink? <button type="button" onClick={onRegister}>Create an account</button></div>
-    </>
+    </section>
   )
 }
 
-const ACCOUNT_TYPES: { type: AccountType; title: string; detail: string; icon: ReactNode }[] = [
-  { type: 'student', title: "I'm a student", detail: 'Find and apply for internships.', icon: <GraduationCap size={18} /> },
-  { type: 'employer', title: "I'm hiring interns", detail: 'Register a company and post internships.', icon: <Building2 size={18} /> },
-  { type: 'university', title: 'I work at a university', detail: 'Verify students and approve placements.', icon: <School size={18} /> },
+const ACCOUNT_TYPES: { type: AccountType; title: string; detail: string }[] = [
+  { type: 'student', title: "I'm a student", detail: 'Find and apply for internships.' },
+  { type: 'employer', title: "I'm hiring interns", detail: 'Register a company and post internships.' },
+  { type: 'university', title: 'I work at a university', detail: 'Verify students and approve placements.' },
 ]
 
-function ChooseAccount({ onBack, onChoose }: { onBack: () => void; onChoose: (type: AccountType) => void }) {
-  const [choice, setChoice] = useState<AccountType>('student')
+function Stepper({ step }: { step: 1 | 2 | 3 }) {
+  const labels = ['Account type', 'Your details', 'Confirm email']
+  return (
+    <ol className="stepper" aria-label="Sign-up progress" style={{ listStyle: 'none', padding: 0 }}>
+      {labels.map((label, index) => {
+        const number = index + 1
+        const state = number < step ? 'is-done' : number === step ? 'is-current' : ''
+        return <li key={label} style={{ display: 'contents' }}>
+          {index > 0 && <i aria-hidden="true" />}
+          <span className={state} aria-current={number === step ? 'step' : undefined}><b>{number}</b>{label}</span>
+        </li>
+      })}
+    </ol>
+  )
+}
+
+function SignUp({ type, onType, onDone }: { type: AccountType; onType: (type: AccountType) => void; onDone: (message: string, email: string) => void }) {
+  const [requesting, setRequesting] = useState(false)
   return (
     <>
-      <BackLink onClick={onBack}>Back to sign in</BackLink>
-      <CardHeading icon={<CheckCircle2 size={20} />} label="CREATE AN ACCOUNT" title="Who are you?" subtitle="Choose the account that fits you. You can't change this later." />
-      <form className="auth-form" onSubmit={(event) => { event.preventDefault(); onChoose(choice) }}>
-        <fieldset className="account-choices">
-          <legend className="sr-only">Account type</legend>
-          {ACCOUNT_TYPES.map((option) => (
-            <label key={option.type} className={`account-choice ${choice === option.type ? 'chosen' : ''}`}>
-              <input type="radio" name="account-type" value={option.type} checked={choice === option.type} onChange={() => setChoice(option.type)} />
-              <span className="account-choice-icon">{option.icon}</span>
-              <span><b>{option.title}</b><small>{option.detail}</small></span>
-            </label>
-          ))}
-        </fieldset>
-        <button className="button button-primary full-button">Continue <ArrowRight size={16} /></button>
-      </form>
+      <Stepper step={2} />
+      <h1 className="signup-title">Create your InternLink account</h1>
+      <p className="muted" style={{ margin: 0 }}>Choose who you are. You can't change this later.</p>
+      <fieldset className="type-grid" style={{ border: 0, padding: 0 }}>
+        <legend className="sr-only">Account type</legend>
+        {ACCOUNT_TYPES.map((option) => (
+          <label key={option.type} className={`type-option ${type === option.type ? 'is-chosen' : ''}`}>
+            <input type="radio" name="account-type" checked={type === option.type} onChange={() => { onType(option.type); setRequesting(false) }} />
+            <span><b>{option.title}</b><small>{option.detail}</small></span>
+          </label>
+        ))}
+      </fieldset>
+      <div className={`signup-grid ${type === 'student' ? '' : 'is-single'}`}>
+        {type === 'student' && <StudentForm onDone={onDone} onRequestUniversity={() => setRequesting(true)} />}
+        {type === 'employer' && <EmployerForm onDone={onDone} />}
+        {type === 'university' && <UniversityForm onDone={onDone} />}
+        {type === 'student' && (requesting ? <RequestUniversity onClose={() => setRequesting(false)} /> : <section className="card">
+          <span className="eyebrow-s">Before you start</span>
+          <h2>Use your university email</h2>
+          <p className="muted" style={{ fontSize: 14 }}>InternLink checks that you study at the university you choose, so sign up with the email address your university gave you (for example <b>name@std.must.ac.ug</b>). You'll add skills and interests after signing in.</p>
+          <p style={{ fontSize: 14, margin: 0 }}>University not listed? <button type="button" className="btn-link" onClick={() => setRequesting(true)}>Request your university</button></p>
+        </section>)}
+      </div>
     </>
   )
 }
 
-function StudentForm({ onBack, onDone }: { onBack: () => void; onDone: (message: string, email: string) => void }) {
+function passwordStrength(password: string) {
+  if (!password) return { score: 0, label: '' }
+  let score = password.length >= 10 ? 1 : 0
+  if (/\d/.test(password)) score += 1
+  if (/[^A-Za-z0-9]/.test(password)) score += 1
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password) && password.length >= 12) score += 1
+  const labels = ['too short', 'weak', 'fair', 'good', 'strong']
+  const advice = password.length < 10 ? 'Use at least 10 characters.' : score < 3 ? 'Add a number or symbol.' : ''
+  return { score, label: `Strength: ${labels[score]}.${advice ? ` ${advice}` : ''}` }
+}
+
+function StudentForm({ onDone, onRequestUniversity }: { onDone: (message: string, email: string) => void; onRequestUniversity: () => void }) {
   const [universities, setUniversities] = useState<University[]>([])
-  const [departments, setDepartments] = useState<CatalogItem[] | null>(null)
-  const [programmes, setProgrammes] = useState<CatalogItem[] | null>(null)
-  const [values, setValues] = useState({ full_name: '', email: '', password: '', student_number: '', university_id: '', department_id: '', programme_id: '', year_of_study: '1' })
+  const [universityText, setUniversityText] = useState('')
+  const [programmes, setProgrammes] = useState<ProgrammeOption[] | null>(null)
+  const [values, setValues] = useState({ full_name: '', email: '', password: '', student_number: '', programme_id: '', year_of_study: '1' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const university = universities.find((item) => item.name.toLowerCase() === universityText.trim().toLowerCase())
 
   useEffect(() => {
     studentApi.universities()
       .then((result) => setUniversities(result.universities))
       .catch((reason: unknown) => setError(messageFrom(reason)))
   }, [])
-  // Clear the old list straight away and ignore replies for an earlier
-  // selection, so a slow response can't show another university's options.
-  useEffect(() => {
-    setDepartments(null)
-    if (!values.university_id) return
-    let current = true
-    studentApi.departments(Number(values.university_id))
-      .then((result) => { if (current) setDepartments(result.departments) })
-      .catch((reason: unknown) => { if (current) setError(messageFrom(reason)) })
-    return () => { current = false }
-  }, [values.university_id])
+  // Ignore replies for an earlier choice, so a slow response can't show another university's programmes.
   useEffect(() => {
     setProgrammes(null)
-    if (!values.department_id) return
+    setValues((current) => ({ ...current, programme_id: '' }))
+    if (!university) return
     let current = true
-    studentApi.programmes(Number(values.department_id))
+    publicApi.universityProgrammes(university.id)
       .then((result) => { if (current) setProgrammes(result.programmes) })
       .catch((reason: unknown) => { if (current) setError(messageFrom(reason)) })
     return () => { current = false }
-  }, [values.department_id])
+  }, [university?.id])
 
-  function update(name: keyof typeof values, value: string) {
-    setValues((current) => ({
-      ...current,
-      [name]: value,
-      ...(name === 'university_id' ? { department_id: '', programme_id: '' } : {}),
-      ...(name === 'department_id' ? { programme_id: '' } : {}),
-    }))
-  }
+  const update = (name: keyof typeof values, value: string) => setValues((current) => ({ ...current, [name]: value }))
+  const programme = programmes?.find((item) => String(item.id) === values.programme_id)
+  const departments = [...new Set(programmes?.map((item) => item.department) ?? [])]
+  const strength = passwordStrength(values.password)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
+    if (!university || !programme) {
+      setError(!university ? 'Choose your university from the list.' : 'Choose your programme.')
+      return
+    }
     setBusy(true)
     setError('')
     try {
       const result = await studentApi.register({
         ...values,
-        university_id: Number(values.university_id),
-        department_id: Number(values.department_id),
-        programme_id: Number(values.programme_id),
+        university_id: university.id,
+        department_id: programme.department_id,
+        programme_id: programme.id,
         year_of_study: Number(values.year_of_study),
       })
       onDone(result.message, values.email)
@@ -291,46 +283,87 @@ function StudentForm({ onBack, onDone }: { onBack: () => void; onDone: (message:
     }
   }
 
-  const universityNotReady = departments !== null && departments.length === 0
-  const departmentNotReady = programmes !== null && programmes.length === 0
-  const emailDomain = universities.find((item) => String(item.id) === values.university_id)?.email_domain
   return (
-    <>
-      <BackLink onClick={onBack} />
-      <CardHeading icon={<GraduationCap size={20} />} label="STUDENT ACCOUNT" title="Create your account" subtitle="Register with your university email to get started." />
-      <form className="auth-form registration-form" onSubmit={(event) => void submit(event)}>
-        <label>Full name<input autoComplete="name" value={values.full_name} onChange={(event) => update('full_name', event.target.value)} required /></label>
-        <Field label="University" hint="Can't find yours? Ask your internship coordinator to register it with “I work at a university”.">
-          <select value={values.university_id} onChange={(event) => update('university_id', event.target.value)} required>
-            <option value="">{universities.length ? 'Select university' : 'Loading universities…'}</option>
-            {universities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
+    <section className="card">
+      <span className="eyebrow-s">Step 2 · Student</span>
+      <h2>Your details</h2>
+      <form className="stack" style={{ marginTop: 14 }} onSubmit={(event) => void submit(event)}>
+        <Field label="Full name"><input autoComplete="name" placeholder="e.g. Nakato Sarah" value={values.full_name} onChange={(event) => update('full_name', event.target.value)} required /></Field>
+        <Field label="University" hint={<button type="button" className="btn-link" style={{ fontSize: 12 }} onClick={onRequestUniversity}>My university isn't listed</button>}>
+          <input list="universities" placeholder={universities.length ? 'Start typing your university…' : 'Loading universities…'} value={universityText} onChange={(event) => setUniversityText(event.target.value)} required autoComplete="off" />
+          <datalist id="universities">{universities.map((item) => <option key={item.id} value={item.name} />)}</datalist>
         </Field>
-        {universityNotReady && <div className="form-error" role="status">This university hasn't added its departments yet. Ask your internship coordinator to add them under “Departments &amp; programmes”.</div>}
-        <Field label="University email" hint={emailDomain ? `Use your ${emailDomain} email address (a student subdomain such as std.${emailDomain} also works).` : 'Use the email address your university gave you.'}>
-          <input type="email" autoComplete="email" placeholder={emailDomain ? `name@${emailDomain}` : 'name@university.ac.ug'} value={values.email} onChange={(event) => update('email', event.target.value)} required />
+        {universityText && !university && universities.length > 0 && <div className="notice" role="status">Pick a university from the list, or request yours.</div>}
+        <Field label="University email" hint={university?.email_domain ? `Use your ${university.email_domain} address (a student address such as std.${university.email_domain} works too).` : 'Use the email address your university gave you.'}>
+          <input type="email" autoComplete="email" placeholder={university?.email_domain ? `name@${university.email_domain}` : 'you@university.ac.ug'} value={values.email} onChange={(event) => update('email', event.target.value)} required />
         </Field>
-        <label>Student number<input value={values.student_number} onChange={(event) => update('student_number', event.target.value)} required /></label>
-        <div className="form-pair">
-          <label>Department<select value={values.department_id} onChange={(event) => update('department_id', event.target.value)} required disabled={!departments?.length}><option value="">Select department</option>{departments?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <label>Programme<select value={values.programme_id} onChange={(event) => update('programme_id', event.target.value)} required disabled={!programmes?.length}><option value="">Select programme</option>{programmes?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <div className="field-pair">
+          <Field label="Programme">
+            <select value={values.programme_id} onChange={(event) => update('programme_id', event.target.value)} required disabled={!programmes?.length}>
+              <option value="">{university ? (programmes ? 'Select programme' : 'Loading…') : 'Choose university first'}</option>
+              {departments.map((department) => <optgroup key={department} label={department}>
+                {programmes?.filter((item) => item.department === department).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </optgroup>)}
+            </select>
+          </Field>
+          <Field label="Year of study">
+            <select value={values.year_of_study} onChange={(event) => update('year_of_study', event.target.value)}>{[1, 2, 3, 4, 5, 6].map((year) => <option key={year} value={year}>Year {year}</option>)}</select>
+          </Field>
         </div>
-        {departmentNotReady && <div className="form-error" role="status">This department has no programmes yet. Pick another department or ask your coordinator to add your programme.</div>}
-        <label>Year of study<select value={values.year_of_study} onChange={(event) => update('year_of_study', event.target.value)}>{[1, 2, 3, 4, 5, 6].map((year) => <option key={year} value={year}>Year {year}</option>)}</select></label>
-        <Field label="Password" hint="Use at least 10 characters.">
-          <input type="password" autoComplete="new-password" minLength={10} value={values.password} onChange={(event) => update('password', event.target.value)} required />
+        {programmes && programmes.length === 0 && <div className="notice" role="status">This university hasn't added its programmes yet. Ask your internship coordinator to add them.</div>}
+        <Field label="Student number"><input value={values.student_number} onChange={(event) => update('student_number', event.target.value)} required /></Field>
+        <Field label="Password" hint={strength.label || 'At least 10 characters.'}>
+          <input type="password" autoComplete="new-password" minLength={10} placeholder="At least 10 characters" value={values.password} onChange={(event) => update('password', event.target.value)} required />
+          <div className="strength" aria-hidden="true">{[1, 2, 3, 4].map((step) => <i key={step} className={strength.score >= step ? 'is-on' : ''} />)}</div>
         </Field>
-        {error && <div className="form-error" role="alert">{error}</div>}
-        <button className="button button-primary full-button" disabled={busy || !universities.length}>{busy ? 'Creating account…' : 'Create account'} <ArrowRight size={16} /></button>
-        {!universities.length && !error && <small className="helper-text">Loading universities…</small>}
+        {error && <div className="notice is-error" role="alert">{error}</div>}
+        <button className="btn btn-primary btn-block" disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button>
       </form>
-    </>
+    </section>
+  )
+}
+
+function RequestUniversity({ onClose }: { onClose: () => void }) {
+  const [values, setValues] = useState({ university_name: '', requester_email: '', coordinator_email: '' })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [done, setDone] = useState('')
+  const update = (name: keyof typeof values, value: string) => setValues((current) => ({ ...current, [name]: value }))
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      setDone((await publicApi.requestUniversity({ ...values, coordinator_email: values.coordinator_email || undefined })).message)
+    } catch (reason) {
+      setError(messageFrom(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="card">
+      <span className="eyebrow-s">If the university isn't listed</span>
+      <h2>Request your university</h2>
+      {done ? <div className="stack" style={{ marginTop: 12 }}><div className="notice is-ok" role="status">{done}</div><button className="btn" onClick={onClose}>Close</button></div>
+        : <form className="stack" style={{ marginTop: 12 }} onSubmit={(event) => void submit(event)}>
+          <Field label="University name"><input placeholder="Full university name" value={values.university_name} onChange={(event) => update('university_name', event.target.value)} required maxLength={160} /></Field>
+          <Field label="Your email" hint="We'll tell you when your university joins."><input type="email" value={values.requester_email} onChange={(event) => update('requester_email', event.target.value)} required /></Field>
+          <Field label="Coordinator's email (optional)" hint="Your internship coordinator, if you know them. We'll invite them."><input type="email" value={values.coordinator_email} onChange={(event) => update('coordinator_email', event.target.value)} /></Field>
+          {error && <div className="notice is-error" role="alert">{error}</div>}
+          <div style={{ display: 'flex', gap: 8 }}><button className="btn btn-primary" disabled={busy}>{busy ? 'Sending…' : 'Send request'}</button><button type="button" className="btn" onClick={onClose}>Cancel</button></div>
+          <small className="muted">Student accounts need a listed university, so you'll be able to sign up once it joins.</small>
+        </form>}
+    </section>
   )
 }
 
 const EMPLOYER_PASSWORD_HINT = 'At least 8 characters, with upper and lower case letters and a digit.'
+const SECTORS = ['Software', 'Data & analytics', 'Finance', 'Telecoms', 'Agriculture', 'Healthcare', 'Education', 'Engineering', 'Media', 'NGO', 'Government', 'Other']
 
-function EmployerForm({ onBack, onDone }: { onBack: () => void; onDone: (message: string, email: string) => void }) {
+function EmployerForm({ onDone }: { onDone: (message: string, email: string) => void }) {
   const [values, setValues] = useState({
     company_name: '', sector: '', location: '', website: '', contact_email: '',
     rep_full_name: '', rep_email: '', rep_phone: '', password: '',
@@ -358,35 +391,38 @@ function EmployerForm({ onBack, onDone }: { onBack: () => void; onDone: (message
   }
 
   return (
-    <>
-      <BackLink onClick={onBack} />
-      <CardHeading icon={<Building2 size={20} />} label="EMPLOYER ACCOUNT" title="Register your company" subtitle="Draft listings straight away. They go live once we verify your company." />
-      <form className="auth-form registration-form" onSubmit={(event) => void submit(event)}>
+    <section className="card">
+      <span className="eyebrow-s">Step 2 · Employer</span>
+      <h2>Your company</h2>
+      <form className="stack" style={{ marginTop: 14 }} onSubmit={(event) => void submit(event)}>
         <Field label="Company name" error={errors.company_name}><input autoComplete="organization" value={values.company_name} onChange={(event) => update('company_name', event.target.value)} required /></Field>
-        <div className="form-pair">
-          <Field label="Sector" error={errors.sector}><input placeholder="e.g. Software" value={values.sector} onChange={(event) => update('sector', event.target.value)} required /></Field>
-          <Field label="Location" error={errors.location}><input placeholder="e.g. Kampala" value={values.location} onChange={(event) => update('location', event.target.value)} required /></Field>
-        </div>
-        <Field label="Website (optional)" error={errors.website}><input type="url" placeholder="https://" value={values.website} onChange={(event) => update('website', event.target.value)} /></Field>
         <Field label="Your full name" error={errors.rep_full_name}><input autoComplete="name" value={values.rep_full_name} onChange={(event) => update('rep_full_name', event.target.value)} required /></Field>
-        <div className="form-pair">
-          <Field label="Your work email" error={errors.rep_email}><input type="email" autoComplete="email" value={values.rep_email} onChange={(event) => update('rep_email', event.target.value)} required /></Field>
-          <Field label="Phone (optional)" error={errors.rep_phone}><input type="tel" autoComplete="tel" placeholder="+256" value={values.rep_phone} onChange={(event) => update('rep_phone', event.target.value)} /></Field>
+        <Field label="Your work email" error={errors.rep_email}><input type="email" autoComplete="email" placeholder="you@company.co.ug" value={values.rep_email} onChange={(event) => update('rep_email', event.target.value)} required /></Field>
+        <div className="field-pair">
+          <Field label="Sector" error={errors.sector}>
+            <select value={values.sector} onChange={(event) => update('sector', event.target.value)} required>
+              <option value="">Select sector</option>
+              {SECTORS.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </Field>
+          <Field label="Phone (optional)" error={errors.rep_phone}><input type="tel" autoComplete="tel" placeholder="+256 …" value={values.rep_phone} onChange={(event) => update('rep_phone', event.target.value)} /></Field>
         </div>
-        <Field label="Company contact email (optional)" error={errors.contact_email} hint="Where students and our team can reach the company. Defaults to your work email.">
-          <input type="email" value={values.contact_email} onChange={(event) => update('contact_email', event.target.value)} />
-        </Field>
+        <div className="field-pair">
+          <Field label="Location" error={errors.location}><input placeholder="e.g. Kampala" value={values.location} onChange={(event) => update('location', event.target.value)} required /></Field>
+          <Field label="Website (optional)" error={errors.website}><input type="url" placeholder="https://" value={values.website} onChange={(event) => update('website', event.target.value)} /></Field>
+        </div>
         <Field label="Password" error={errors.password} hint={EMPLOYER_PASSWORD_HINT}>
           <input type="password" autoComplete="new-password" minLength={8} value={values.password} onChange={(event) => update('password', event.target.value)} required />
         </Field>
-        {error && <div className="form-error" role="alert">{error}</div>}
-        <button className="button button-primary full-button" disabled={busy}>{busy ? 'Registering…' : 'Register company'} <ArrowRight size={16} /></button>
+        <div className="notice is-info">You can sign in and draft listings straight away. Listings go live once our team verifies your company.</div>
+        {error && <div className="notice is-error" role="alert">{error}</div>}
+        <button className="btn btn-primary btn-block" disabled={busy}>{busy ? 'Registering…' : 'Register company'}</button>
       </form>
-    </>
+    </section>
   )
 }
 
-function UniversityForm({ onBack, onDone }: { onBack: () => void; onDone: (message: string, email: string) => void }) {
+function UniversityForm({ onDone }: { onDone: (message: string, email: string) => void }) {
   const [values, setValues] = useState({ university_name: '', location: '', email_domain: '', full_name: '', email: '', password: '' })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -407,25 +443,64 @@ function UniversityForm({ onBack, onDone }: { onBack: () => void; onDone: (messa
   }
 
   return (
-    <>
-      <BackLink onClick={onBack} />
-      <CardHeading icon={<School size={20} />} label="UNIVERSITY ACCOUNT" title="Bring your university on board" subtitle="You'll be its first internship coordinator. Our team reviews every university." />
-      <form className="auth-form registration-form" onSubmit={(event) => void submit(event)}>
-        <label>University name<input value={values.university_name} onChange={(event) => update('university_name', event.target.value)} required /></label>
-        <div className="form-pair">
-          <label>Location<input placeholder="e.g. Gulu" value={values.location} onChange={(event) => update('location', event.target.value)} required /></label>
+    <section className="card">
+      <span className="eyebrow-s">Step 2 · University</span>
+      <h2>Bring your university on board</h2>
+      <p className="muted" style={{ fontSize: 14 }}>You'll be its first internship coordinator. Our team reviews every university.</p>
+      <form className="stack" onSubmit={(event) => void submit(event)}>
+        <Field label="University name"><input value={values.university_name} onChange={(event) => update('university_name', event.target.value)} required /></Field>
+        <div className="field-pair">
+          <Field label="Location"><input placeholder="e.g. Gulu" value={values.location} onChange={(event) => update('location', event.target.value)} required /></Field>
           <Field label="Email domain" hint="e.g. gu.ac.ug"><input value={values.email_domain} onChange={(event) => update('email_domain', event.target.value)} required /></Field>
         </div>
-        <label>Your full name<input autoComplete="name" value={values.full_name} onChange={(event) => update('full_name', event.target.value)} required /></label>
-        <Field label="Your staff email" hint="Must end with the university's email domain.">
-          <input type="email" autoComplete="email" value={values.email} onChange={(event) => update('email', event.target.value)} required />
-        </Field>
-        <Field label="Password" hint="Use at least 10 characters.">
-          <input type="password" autoComplete="new-password" minLength={10} value={values.password} onChange={(event) => update('password', event.target.value)} required />
-        </Field>
-        {error && <div className="form-error" role="alert">{error}</div>}
-        <button className="button button-primary full-button" disabled={busy}>{busy ? 'Sending…' : 'Register university'} <ArrowRight size={16} /></button>
+        <Field label="Your full name"><input autoComplete="name" value={values.full_name} onChange={(event) => update('full_name', event.target.value)} required /></Field>
+        <Field label="Your staff email" hint="Must end with the university's email domain."><input type="email" autoComplete="email" value={values.email} onChange={(event) => update('email', event.target.value)} required /></Field>
+        <Field label="Password" hint="At least 10 characters."><input type="password" autoComplete="new-password" minLength={10} value={values.password} onChange={(event) => update('password', event.target.value)} required /></Field>
+        {error && <div className="notice is-error" role="alert">{error}</div>}
+        <button className="btn btn-primary btn-block" disabled={busy}>{busy ? 'Sending…' : 'Register university'}</button>
       </form>
+    </section>
+  )
+}
+
+const RESEND_WAIT_SECONDS = 60
+
+function SentStep({ message, email, onChange }: { message: string; email?: string; onChange: () => void }) {
+  const [wait, setWait] = useState(email ? RESEND_WAIT_SECONDS : 0)
+  const [resent, setResent] = useState('')
+
+  useEffect(() => {
+    if (wait <= 0) return
+    const timer = window.setTimeout(() => setWait((value) => value - 1), 1000)
+    return () => window.clearTimeout(timer)
+  }, [wait])
+
+  async function resend() {
+    if (!email) return
+    setWait(RESEND_WAIT_SECONDS)
+    try {
+      setResent((await accountApi.resendVerification(email)).message)
+    } catch (reason) {
+      setResent(messageFrom(reason))
+    }
+  }
+
+  return (
+    <>
+      <Stepper step={3} />
+      <section className="card auth-single" role="status" style={{ marginLeft: 0 }}>
+        <span className="eyebrow-s">Step 3</span>
+        <div className="mail-badge"><Mail size={22} /></div>
+        <h2>Check your inbox</h2>
+        <p>{email ? <>We sent a link to <b>{email}</b>. It expires in 24 hours.</> : message}</p>
+        {email && <p className="muted" style={{ fontSize: 14 }}>{message}</p>}
+        {resent && <div className="notice is-info" style={{ marginBottom: 12 }}>{resent}</div>}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {email && <button type="button" className="btn" disabled={wait > 0} onClick={() => void resend()}>{wait > 0 ? `Resend email in ${wait}s` : 'Resend email'}</button>}
+          <button type="button" className="btn" onClick={onChange}>Change email</button>
+          <a className="btn btn-primary" {...linkTo('/signin')}>Go to sign in</a>
+        </div>
+      </section>
     </>
   )
 }
@@ -449,15 +524,16 @@ function ForgotForm({ onBack, onDone }: { onBack: () => void; onDone: (message: 
   }
 
   return (
-    <>
-      <BackLink onClick={onBack}>Back to sign in</BackLink>
-      <CardHeading icon={<KeyRound size={20} />} label="ACCOUNT RECOVERY" title="Reset your password" subtitle="Enter your email and we'll send you a link to choose a new password." />
-      <form className="auth-form" onSubmit={(event) => void submit(event)}>
-        <label>Email address<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-        {error && <div className="form-error" role="alert">{error}</div>}
-        <button className="button button-primary full-button" disabled={busy}>{busy ? 'Sending…' : 'Send reset link'} <ArrowRight size={16} /></button>
+    <section className="card">
+      <h2>Reset your password</h2>
+      <p className="muted" style={{ fontSize: 14 }}>Enter your email and we'll send you a link to choose a new password.</p>
+      <form className="stack" onSubmit={(event) => void submit(event)}>
+        <Field label="Email"><input type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(event) => setEmail(event.target.value)} required /></Field>
+        {error && <div className="notice is-error" role="alert">{error}</div>}
+        <button className="btn btn-primary btn-block" disabled={busy}>{busy ? 'Sending…' : 'Send reset link'}</button>
+        <button type="button" className="btn-link" onClick={onBack}>Back to sign in</button>
       </form>
-    </>
+    </section>
   )
 }
 
@@ -485,52 +561,18 @@ function ResetForm({ token, onBack, onDone }: { token: string; onBack: () => voi
   }
 
   return (
-    <>
-      <BackLink onClick={onBack}>Back to sign in</BackLink>
-      <CardHeading icon={<KeyRound size={20} />} label="ACCOUNT RECOVERY" title="Choose a new password" subtitle="This signs you out of InternLink on other devices." />
-      <form className="auth-form" onSubmit={(event) => void submit(event)}>
+    <section className="card">
+      <h2>Choose a new password</h2>
+      <p className="muted" style={{ fontSize: 14 }}>This signs you out of InternLink on other devices.</p>
+      <form className="stack" onSubmit={(event) => void submit(event)}>
         <Field label="New password" hint="At least 10 characters. Employer accounts also need upper and lower case letters and a digit.">
           <input type="password" autoComplete="new-password" minLength={10} value={password} onChange={(event) => setPassword(event.target.value)} required />
         </Field>
-        <label>Confirm new password<input type="password" autoComplete="new-password" minLength={10} value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></label>
-        {error && <div className="form-error" role="alert">{error}</div>}
-        <button className="button button-primary full-button" disabled={busy}>{busy ? 'Saving…' : 'Save new password'} <ArrowRight size={16} /></button>
+        <Field label="Confirm new password"><input type="password" autoComplete="new-password" minLength={10} value={confirm} onChange={(event) => setConfirm(event.target.value)} required /></Field>
+        {error && <div className="notice is-error" role="alert">{error}</div>}
+        <button className="btn btn-primary btn-block" disabled={busy}>{busy ? 'Saving…' : 'Save new password'}</button>
+        <button type="button" className="btn-link" onClick={onBack}>Back to sign in</button>
       </form>
-    </>
-  )
-}
-
-const RESEND_WAIT_SECONDS = 60
-
-function SentPanel({ title, message, email, onBack }: { title: string; message: string; email?: string; onBack: () => void }) {
-  const [wait, setWait] = useState(email ? RESEND_WAIT_SECONDS : 0)
-  const [resent, setResent] = useState('')
-
-  useEffect(() => {
-    if (wait <= 0) return
-    const timer = window.setTimeout(() => setWait((value) => value - 1), 1000)
-    return () => window.clearTimeout(timer)
-  }, [wait])
-
-  async function resend() {
-    if (!email) return
-    setWait(RESEND_WAIT_SECONDS)
-    try {
-      setResent((await accountApi.resendVerification(email)).message)
-    } catch (reason) {
-      setResent(messageFrom(reason))
-    }
-  }
-
-  return (
-    <div className="success-panel" role="status">
-      <Mail size={22} />
-      <strong>{title}</strong>
-      <p>{message}</p>
-      {email && <p>Sent to <b>{email}</b>. The link expires in 24 hours.</p>}
-      {resent && <p>{resent}</p>}
-      {email && <button type="button" className="button button-secondary" disabled={wait > 0} onClick={() => void resend()}>{wait > 0 ? `Resend email in ${wait}s` : 'Resend email'}</button>}
-      <button type="button" className="button button-secondary" onClick={onBack}>Return to sign in</button>
-    </div>
+    </section>
   )
 }

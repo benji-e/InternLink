@@ -26,6 +26,8 @@ export type Application = {
   submitted: string
   status: string
   match: number
+  unread: number
+  placementStatus: string | null
 }
 
 export type StudentProfile = {

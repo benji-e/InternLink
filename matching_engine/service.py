@@ -34,6 +34,9 @@ class Recommendation:
     applied: bool
     matched_skills: list[str] = field(default_factory=list)
     missing_skills: list[str] = field(default_factory=list)
+    location: str | None = None
+    is_remote: bool = False
+    duration_weeks: int | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,7 @@ def student_id_for_user(conn, user_id: int) -> int | None:
 RECOMMEND_SQL = """
     SELECT r.rank, r.listing_id, r.score, r.p, r.s, r.i, r.l, r.applied,
            l.title, c.name AS company, l.application_deadline AS deadline,
+           l.location, l.is_remote, l.duration_weeks,
            COALESCE(array_agg(sk.name ORDER BY sk.name) FILTER (WHERE ss.skill_id IS NOT NULL), '{}') AS matched,
            COALESCE(array_agg(sk.name ORDER BY sk.name)
                     FILTER (WHERE sk.skill_id IS NOT NULL AND ss.skill_id IS NULL), '{}') AS missing
@@ -70,7 +74,8 @@ RECOMMEND_SQL = """
     LEFT JOIN listing_skills ls ON ls.listing_id = r.listing_id AND ls.is_required
     LEFT JOIN skills sk ON sk.skill_id = ls.skill_id
     LEFT JOIN student_skills ss ON ss.skill_id = ls.skill_id AND ss.student_id = %(sid)s
-    GROUP BY r.rank, r.listing_id, r.score, r.p, r.s, r.i, r.l, r.applied, l.title, c.name, l.application_deadline
+    GROUP BY r.rank, r.listing_id, r.score, r.p, r.s, r.i, r.l, r.applied, l.title, c.name, l.application_deadline,
+             l.location, l.is_remote, l.duration_weeks
     ORDER BY r.rank"""
 
 
@@ -92,6 +97,9 @@ def _to_recommendation(row) -> Recommendation:
         applied=row["applied"],
         matched_skills=list(row["matched"]),
         missing_skills=list(row["missing"]),
+        location=row.get("location"),
+        is_remote=bool(row.get("is_remote", False)),
+        duration_weeks=row.get("duration_weeks"),
     )
 
 

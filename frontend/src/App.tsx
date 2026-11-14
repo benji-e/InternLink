@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import {
-  ArrowDownUp, ArrowRight, Bell, BriefcaseBusiness,
-  Check, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Clock3, FileText,
-  Filter, GraduationCap, LayoutDashboard, LogOut, MapPin, Menu, Search,
-  Library, Plus, ShieldCheck, SlidersHorizontal, Sparkles, Users, X,
+  ArrowRight, Bell, BriefcaseBusiness,
+  Check, CheckCircle2, ChevronDown, CircleHelp, Clock3, FileText,
+  GraduationCap, LayoutDashboard, LogOut, Menu, Search,
+  Library, Plus, ShieldCheck, Users, X,
 } from 'lucide-react'
 import { ApiError, employerRequest, roleApi, studentApi, type AuthUser, type CatalogItem, type CoordinatorCatalog } from './api'
 import { AuthGate, isAuthLinkPath } from './AuthPages'
+import { HomePage, InternshipDetailPage, InternshipsPage } from './PublicSite'
+import { StudentApplications, StudentHome, StudentShell, type StudentPage } from './StudentPages'
+import { navigate, useLocation } from './router'
 import { BrandMark } from './BrandMark'
 import type { Application, Opportunity, Page, Role, StudentProfile } from './types'
 import './App.css'
@@ -16,14 +19,6 @@ type LiveSession = { token: string; user: LiveUser }
 type NotificationItem = { id: number; title: string; message: string; time: string; read: boolean }
 
 const SESSION_KEY = 'internlink-student-session'
-
-const studentNav: { page: Page; label: string; icon: typeof LayoutDashboard }[] = [
-  { page: 'dashboard', label: 'Recommended', icon: Sparkles },
-  { page: 'browse', label: 'Browse internships', icon: Search },
-  { page: 'applications', label: 'My applications', icon: FileText },
-  { page: 'notifications', label: 'Notifications', icon: Bell },
-  { page: 'profile', label: 'My profile', icon: GraduationCap },
-]
 
 const employerNav: { page: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { page: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -90,7 +85,7 @@ function mapOpportunity(row: Record<string, unknown>, index: number): Opportunit
     description: String(row.description ?? 'See the opportunity details for more information.'),
     skills: Array.isArray(row.required_skills) ? row.required_skills.map(String) : Array.isArray(row.matched_skills) ? row.matched_skills.map(String) : [],
     match: Number(row.score ?? row.match ?? 0),
-    appliedStatus: typeof row.application_status === 'string' ? row.application_status : null,
+    appliedStatus: typeof row.application_status === 'string' ? row.application_status : row.applied ? 'applied' : null,
   }
 }
 
@@ -104,6 +99,8 @@ function mapApplication(row: Record<string, unknown>, index: number): Applicatio
     submitted: String(row.submitted_at ?? row.submitted ?? ''),
     status: String(row.status ?? 'submitted'),
     match: Number(row.match_score ?? row.match ?? 0),
+    unread: Number(row.unread_messages ?? 0),
+    placementStatus: typeof row.placement_status === 'string' ? row.placement_status : null,
   }
 }
 
@@ -129,23 +126,17 @@ function mapProfile(row: Record<string, unknown>): StudentProfile {
 function App() {
   // Links from our emails (confirm, reset password) open the sign-in screens even if signed in.
   const restoredSession = useMemo(() => (isAuthLinkPath() ? null : readSession()), [])
+  const { path, search: urlSearch } = useLocation()
+  const [recommendationsError, setRecommendationsError] = useState('')
   const [role, setRole] = useState<Role | null>(restoredSession?.user.role ?? null)
   const [page, setPage] = useState<Page>('dashboard')
   const [session, setSession] = useState<LiveSession | null>(restoredSession)
   const [profile, setProfile] = useState<StudentProfile>(emptyProfile)
   const [liveRecommendations, setLiveRecommendations] = useState<Opportunity[]>([])
-  const [liveOpportunities, setLiveOpportunities] = useState<Opportunity[]>([])
   const [liveApplications, setLiveApplications] = useState<Application[]>([])
   const [liveNotifications, setLiveNotifications] = useState<NotificationItem[]>([])
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState('')
-  const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null)
-  const [showApply, setShowApply] = useState(false)
-  const [search, setSearch] = useState('')
-  const [sector, setSector] = useState('All sectors')
-  const [location, setLocation] = useState('All locations')
-  const [duration, setDuration] = useState('Any duration')
-  const [applicationStatus, setApplicationStatus] = useState('All statuses')
   const [mobileMenu, setMobileMenu] = useState(false)
   const [accountMenu, setAccountMenu] = useState(false)
   const [selectedListingId, setSelectedListingId] = useState<number | null>(null)
@@ -226,12 +217,16 @@ function App() {
     try {
       const [profileResult, recommendationResult, applicationResult, notificationResult] = await Promise.all([
         studentApi.profile(active.token),
-        studentApi.recommendations(active.token),
+        studentApi.recommendations(active.token).catch((error: unknown) => {
+          if (error instanceof ApiError && error.status === 401) throw error
+          return { results: [], error: messageFrom(error) }
+        }),
         studentApi.applications(active.token),
         studentApi.notifications(active.token),
       ])
       setProfile(mapProfile(profileResult.profile))
       setLiveRecommendations(recommendationResult.results.map(mapOpportunity))
+      setRecommendationsError('error' in recommendationResult ? String(recommendationResult.error) : '')
       setLiveApplications(applicationResult.applications.map(mapApplication))
       setLiveNotifications(notificationResult.notifications.map((item, index) => ({
         id: Number(item.notification_id ?? index),
@@ -253,13 +248,13 @@ function App() {
 
   function signOut() {
     localStorage.removeItem(SESSION_KEY)
+    navigate('/')
     setSession(null)
     setRole(null)
     setPage('dashboard')
     setSelectedListingId(null)
     setLiveRecommendations([])
     setLiveApplications([])
-    setLiveOpportunities([])
     setToast('')
   }
 
@@ -271,48 +266,8 @@ function App() {
     setRole(active.user.role)
     setPage(active.user.role === 'admin' ? 'approvals' : active.user.role === 'employer' ? 'dashboard' : 'dashboard')
     setToast('')
-  }
-
-  async function loadBrowseResults() {
-    if (!session) return
-    setLoading(true)
-    const params = new URLSearchParams()
-    if (search.trim()) params.set('search', search.trim())
-    if (sector !== 'All sectors') params.set('sector', sector)
-    if (location !== 'All locations') params.set('location', location)
-    if (duration === '1–8 weeks') { params.set('min_weeks', '1'); params.set('max_weeks', '8') }
-    if (duration === '9–16 weeks') { params.set('min_weeks', '9'); params.set('max_weeks', '16') }
-    if (duration === '17+ weeks') params.set('min_weeks', '17')
-    try {
-      const result = await studentApi.opportunities(session.token, params)
-      setLiveOpportunities(result.results.map(mapOpportunity))
-    } catch (error) {
-      setToast(messageFrom(error))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (page !== 'browse' || role !== 'student') return
-    const timer = window.setTimeout(() => void loadBrowseResults(), 250)
-    return () => window.clearTimeout(timer)
-  }, [page, role, session, sector, location, duration, search])
-
-  async function submitApplication(opportunity: Opportunity, coverNote: string) {
-    if (!session) return
-    setLoading(true)
-    try {
-      await studentApi.apply(session.token, opportunity.id, coverNote)
-      setToast('Application submitted. You can track it in My applications.')
-      setShowApply(false)
-      setSelectedOpportunity(null)
-      await loadLiveStudent(session)
-    } catch (error) {
-      setToast(messageFrom(error))
-    } finally {
-      setLoading(false)
-    }
+    const next = new URLSearchParams(window.location.search).get('next')
+    navigate(next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard', { replace: true })
   }
 
   async function saveProfile(next: StudentProfile, selectedSkillIds: number[], selectedInterestIds: number[]) {
@@ -358,18 +313,44 @@ function App() {
     }
   }
 
-  if (!role) {
-    return <AuthGate onLogin={handleLogin} toast={toast} />
+  // Redirects happen after render: signed-out visitors go to sign-in, signed-in users skip it.
+  const signedIn = Boolean(session && role)
+  const isPublicPath = path === '/' || path === '/internships' || /^\/internships\/\d+$/.test(path)
+  const isAuthPath = path === '/signin' || path === '/signup' || isAuthLinkPath(path)
+  const redirect = !signedIn && !isPublicPath && !isAuthPath ? `/signin?next=${encodeURIComponent(path + urlSearch)}`
+    : signedIn && (path === '/signin' || path === '/signup') ? '/dashboard' : null
+  useEffect(() => {
+    if (redirect) navigate(redirect, { replace: true })
+  }, [redirect])
+  if (redirect) return null
+
+  // Public pages work signed in or out.
+  const siteSession = session && role ? session : null
+  if (path === '/') return <HomePage session={siteSession} />
+  if (path === '/internships') return <InternshipsPage session={siteSession} search={urlSearch} />
+  const detailMatch = /^\/internships\/(\d+)$/.exec(path)
+  if (detailMatch) return <InternshipDetailPage session={siteSession} id={Number(detailMatch[1])} onApplied={() => session && void loadLiveStudent(session)} />
+
+  if (!role || !session) return <AuthGate path={path} search={urlSearch} onLogin={handleLogin} />
+
+  if (role === 'student') {
+    const studentPage = (new URLSearchParams(urlSearch).get('page') ?? 'home') as StudentPage
+    const goStudent = (next: StudentPage) => navigate(next === 'home' ? '/dashboard' : `/dashboard?page=${next}`)
+    const unreadMessages = liveApplications.reduce((total, item) => total + item.unread, 0)
+    return (
+      <StudentShell page={studentPage} name={session.user.full_name} unreadAlerts={liveNotifications.filter((item) => !item.read).length}
+        unreadMessages={unreadMessages} onPage={goStudent} onSignOut={signOut}>
+        {studentPage === 'applications' ? <StudentApplications token={session.token} applications={liveApplications} onWithdraw={(item) => void withdrawApplication(item)} onRead={() => void loadLiveStudent(session)} />
+          : studentPage === 'notifications' ? <div className="legacy-panel"><NotificationsPage notifications={liveNotifications} onRead={(id) => void markNotificationRead(id)} /></div>
+            : studentPage === 'profile' ? <div className="legacy-panel"><ProfilePage profile={profile} token={session.token} loading={loading} onSave={saveProfile} /></div>
+              : <StudentHome profile={profile} applications={liveApplications} recommendations={liveRecommendations} recommendationsError={recommendationsError} loading={loading} onPage={goStudent} />}
+        {toast && <div className="toast-s" role="status">{toast}</div>}
+      </StudentShell>
+    )
   }
 
-  const nav = role === 'student' ? studentNav : role === 'employer' ? employerNav : role === 'university' ? universityNav : adminNav
+  const nav = role === 'employer' ? employerNav : role === 'university' ? universityNav : adminNav
   const userName = session?.user.full_name ?? profile.fullName
-  const applications = liveApplications
-  const listings = liveOpportunities.map((opportunity) => ({
-    ...opportunity,
-    appliedStatus: applications.find((application) => application.opportunityId === opportunity.id)?.status ?? opportunity.appliedStatus,
-  }))
-
   function changePage(next: Page) {
     setPage(next)
     setMobileMenu(false)
@@ -399,12 +380,11 @@ function App() {
 
       <div className="workspace">
         <aside className={`sidebar ${mobileMenu ? 'sidebar-open' : ''}`}>
-          <div className="workspace-label">{role === 'student' ? 'STUDENT SPACE' : role === 'employer' ? 'EMPLOYER SPACE' : role === 'university' ? 'UNIVERSITY SPACE' : 'ADMIN SPACE'}</div>
+          <div className="workspace-label">{role === 'employer' ? 'EMPLOYER SPACE' : role === 'university' ? 'UNIVERSITY SPACE' : 'ADMIN SPACE'}</div>
           <nav className="side-nav">
             {nav.map(({ page: navPage, label, icon: Icon }) => (
               <button key={navPage} className={`nav-item ${page === navPage ? 'active' : ''}`} onClick={() => changePage(navPage)}>
                 <Icon size={18} strokeWidth={1.9} /><span>{label}</span>
-                {navPage === 'notifications' && role === 'student' && <span className="nav-count">{liveNotifications.filter((item) => !item.read).length}</span>}
               </button>
             ))}
           </nav>
@@ -422,34 +402,6 @@ function App() {
 
         <main className="main-content">
           <div className="mobile-page-title">{nav.find((item) => item.page === page)?.label}</div>
-          {role === 'student' && (
-            <StudentWorkspace
-              page={page}
-              profile={profile}
-              applications={applications}
-              recommendations={liveRecommendations}
-              opportunities={listings}
-              loading={loading}
-              search={search}
-              setSearch={setSearch}
-              sector={sector}
-              setSector={setSector}
-              location={location}
-              setLocation={setLocation}
-              duration={duration}
-              setDuration={setDuration}
-              applicationStatus={applicationStatus}
-              setApplicationStatus={setApplicationStatus}
-              notifications={liveNotifications}
-              token={session?.token ?? ''}
-              onApply={(opportunity) => { setSelectedOpportunity(opportunity); setShowApply(true) }}
-              onSaveProfile={saveProfile}
-              onWithdraw={withdrawApplication}
-              onMarkNotificationRead={markNotificationRead}
-              toast={setToast}
-              onBrowse={loadBrowseResults}
-            />
-          )}
           {role === 'employer' && page === 'messages' && session && (
             <EmployerMessages token={session.token} conversations={employerConversations} initialConversation={selectedMessageConversation} toast={setToast} onRefresh={() => loadLiveRole(session)} />
           )}
@@ -506,17 +458,6 @@ function App() {
         </main>
       </div>
 
-      {selectedOpportunity && (
-        <OpportunityDialog
-          opportunity={selectedOpportunity}
-          apply={showApply}
-          canApply={profile.verified}
-          loading={loading}
-          onClose={() => { setSelectedOpportunity(null); setShowApply(false) }}
-          onApply={(note) => void submitApplication(selectedOpportunity, note)}
-          onStartApply={() => setShowApply(true)}
-        />
-      )}
       {toast && <div className="toast"><CheckCircle2 size={17} />{toast}<button onClick={() => setToast('')} aria-label="Dismiss"><X size={15} /></button></div>}
     </div>
   )
@@ -946,169 +887,6 @@ function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase()
 }
 
-function StudentWorkspace(props: {
-  page: Page; profile: StudentProfile; applications: Application[]; recommendations: Opportunity[]; opportunities: Opportunity[]
-  loading: boolean; search: string; setSearch: (value: string) => void; sector: string; setSector: (value: string) => void
-  location: string; setLocation: (value: string) => void; duration: string; setDuration: (value: string) => void
-  applicationStatus: string; setApplicationStatus: (value: string) => void; notifications: NotificationItem[]
-  token: string; onApply: (opportunity: Opportunity) => void
-  onSaveProfile: (profile: StudentProfile, skillIds: number[], interestIds: number[]) => void
-  onWithdraw: (application: Application) => void; onMarkNotificationRead: (id: number) => void
-  toast: (message: string) => void; onBrowse: () => Promise<void>
-}) {
-  const [activeFilter, setActiveFilter] = useState(false)
-  switch (props.page) {
-    case 'browse':
-      return <BrowsePage {...props} showFilters={activeFilter} onToggleFilters={() => setActiveFilter((value) => !value)} />
-    case 'applications':
-      return <ApplicationsPage {...props} />
-    case 'notifications':
-      return <NotificationsPage notifications={props.notifications} onRead={props.onMarkNotificationRead} />
-    case 'profile':
-      return <ProfilePage profile={props.profile} token={props.token} loading={props.loading} onSave={props.onSaveProfile} />
-    default:
-      return <StudentDashboard {...props} />
-  }
-}
-
-function StudentDashboard(props: Pick<StudentWorkspaceProps, 'profile' | 'applications' | 'recommendations' | 'loading' | 'onApply' | 'toast'>) {
-  const alreadyApplied = (opportunity: Opportunity) => props.applications.some((application) => application.opportunityId === opportunity.id)
-  return (
-    <div className="page-wrap">
-      <PageIntro eyebrow="YOUR STUDENT SPACE" title={`Good morning, ${props.profile.fullName.split(' ')[0]}`} description="Your next opportunity is closer than you think." />
-      <div className="dashboard-welcome">
-        <div className="welcome-icon"><Sparkles size={18} /></div>
-        <div><strong>Opportunities picked for you</strong><p>Based on your programme, skills and interests.</p></div>
-        <span className="welcome-tag">PERSONALISED</span>
-      </div>
-      {!props.profile.verified && <VerificationNotice />}
-      <div className="section-heading">
-        <div><h2>Recommended for you <span className="count-pill">{props.recommendations.length}</span></h2><p>Strong matches based on your profile.</p></div>
-        <button className="text-button arrow-link" onClick={() => props.toast('Choose Browse internships in the left menu to explore all current openings.')}>Explore all <ArrowRight size={15} /></button>
-      </div>
-      <div className="opportunity-list">
-        {props.loading && <LoadingState />}
-        {!props.loading && props.recommendations.length === 0 && <EmptyState title="No recommendations yet" detail="Add skills and interests to your profile, or browse all current internships." />}
-        {!props.loading && props.recommendations.map((opportunity) => (
-          <OpportunityCard
-            key={opportunity.id}
-            opportunity={opportunity}
-            alreadyApplied={alreadyApplied(opportunity)}
-            canApply={props.profile.verified}
-            onApply={() => props.onApply(opportunity)}
-          />
-        ))}
-      </div>
-      <aside className="profile-nudge">
-        <div className="nudge-icon"><GraduationCap size={19} /></div>
-        <div className="nudge-copy"><strong>Make your profile work harder</strong><p>Add skills and interests to get recommendations that feel more like you.</p></div>
-        <div className="nudge-progress"><span>{props.profile.completeness}% complete</span><div className="progress-track"><span style={{ width: `${props.profile.completeness}%` }} /></div></div>
-        <button className="button button-secondary button-small" onClick={() => props.toast('Open My profile from the left menu to update your details.')}>Complete profile <ArrowRight size={14} /></button>
-      </aside>
-    </div>
-  )
-}
-
-type StudentWorkspaceProps = Parameters<typeof StudentWorkspace>[0]
-
-function BrowsePage(props: StudentWorkspaceProps & { showFilters: boolean; onToggleFilters: () => void }) {
-  const [page, setPage] = useState(1)
-  const filtered = useMemo(() => {
-    const query = props.search.trim().toLowerCase()
-    const list = props.opportunities.filter((opportunity) => {
-      const queryMatch = !query || [opportunity.title, opportunity.company, opportunity.sector, opportunity.location, ...opportunity.skills].join(' ').toLowerCase().includes(query)
-      const sectorMatch = props.sector === 'All sectors' || opportunity.sector === props.sector
-      const locationMatch = props.location === 'All locations' || opportunity.location === props.location
-      const durationMatch = props.duration === 'Any duration' ||
-        (props.duration === '1–8 weeks' && opportunity.duration <= 8) ||
-        (props.duration === '9–16 weeks' && opportunity.duration >= 9 && opportunity.duration <= 16) ||
-        (props.duration === '17+ weeks' && opportunity.duration >= 17)
-      return queryMatch && sectorMatch && locationMatch && durationMatch
-    })
-    return list
-  }, [props.opportunities, props.search, props.sector, props.location, props.duration])
-  const pages = Math.max(1, Math.ceil(filtered.length / 5))
-  const shown = filtered.slice((page - 1) * 5, page * 5)
-
-  return (
-    <div className="page-wrap">
-      <PageIntro eyebrow="FIND YOUR FIT" title="Browse internships" description="Explore verified opportunities from employers across Uganda." />
-      <div className="browse-toolbar">
-        <label className="search-field"><Search size={17} /><input placeholder="Search role, company or skill…" value={props.search} onChange={(event) => { props.setSearch(event.target.value); setPage(1) }} /><kbd>⌘ K</kbd></label>
-        <button className={`button button-secondary filter-toggle ${props.showFilters ? 'selected' : ''}`} onClick={props.onToggleFilters}><SlidersHorizontal size={16} /> Filters <span className="filter-dot" /></button>
-      </div>
-      {props.showFilters && <div className="filter-panel">
-        <label>Sector<select value={props.sector} onChange={(event) => { props.setSector(event.target.value); setPage(1) }}>{['All sectors', 'Software', 'Data', 'Telecommunications', 'Finance', 'Research'].map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Location<select value={props.location} onChange={(event) => { props.setLocation(event.target.value); setPage(1) }}>{['All locations', 'Kampala', 'Mbarara', 'Mbale'].map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Duration<select value={props.duration} onChange={(event) => { props.setDuration(event.target.value); setPage(1) }}>{['Any duration', '1–8 weeks', '9–16 weeks', '17+ weeks'].map((item) => <option key={item}>{item}</option>)}</select></label>
-        <button className="text-button" onClick={() => { props.setSector('All sectors'); props.setLocation('All locations'); props.setDuration('Any duration') }}>Clear filters</button>
-      </div>}
-      <div className="results-bar"><span><b>{filtered.length}</b> opportunities found</span><span className="results-sort"><ArrowDownUp size={14} /> Best match</span></div>
-      {props.loading && <LoadingState />}
-      {!props.loading && shown.length === 0 && <EmptyState title="No opportunities match those filters" detail="Try changing your search or clearing one of the filters." />}
-      <div className="opportunity-list">
-        {shown.map((opportunity) => (
-          <OpportunityCard
-            key={opportunity.id}
-            opportunity={opportunity}
-            alreadyApplied={Boolean(opportunity.appliedStatus) || props.applications.some((application) => application.opportunityId === opportunity.id)}
-            canApply={props.profile.verified}
-            onApply={() => props.onApply(opportunity)}
-          />
-        ))}
-      </div>
-      {pages > 1 && <div className="pagination"><button disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {page} of {pages}</span><button disabled={page === pages} onClick={() => setPage((value) => value + 1)}>Next</button></div>}
-    </div>
-  )
-}
-
-function OpportunityCard({ opportunity, alreadyApplied, canApply, onApply }: {
-  opportunity: Opportunity; alreadyApplied: boolean; canApply: boolean; onApply: () => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  return (
-    <article className="opportunity-card">
-      <div className="company-avatar">{opportunity.company.slice(0, 1)}</div>
-      <div className="opportunity-main">
-        <div className="opportunity-overline">{opportunity.sector} <span>·</span> {opportunity.company}</div>
-        <h3>{opportunity.title}</h3>
-        <div className="opportunity-meta"><span><MapPin size={14} />{opportunity.remote ? 'Remote' : opportunity.location}</span><span><Clock3 size={14} />{opportunity.duration} weeks</span><span>{opportunity.slots} {opportunity.slots === 1 ? 'position' : 'positions'}</span></div>
-        <div className="skill-tags">{opportunity.skills.slice(0, 4).map((skill) => <span key={skill}>{skill}</span>)}</div>
-        {expanded && <p className="opportunity-description">{opportunity.description}</p>}
-        <button className="details-link" onClick={() => setExpanded((value) => !value)}>{expanded ? 'Hide details' : 'View details'} <ChevronRight className={expanded ? 'rotate-icon' : ''} size={14} /></button>
-      </div>
-      <div className="opportunity-actions">
-        <div className="match-box"><strong>{opportunity.match}%</strong><span>match</span></div>
-        <button className={`button ${alreadyApplied ? 'button-applied' : 'button-primary'} button-small`} disabled={alreadyApplied || !canApply} onClick={onApply}>
-          {alreadyApplied ? <><Check size={14} /> Applied</> : canApply ? 'Apply now' : 'Verify profile'}
-        </button>
-        <span className="deadline">Closes {formatDate(opportunity.deadline)}</span>
-      </div>
-    </article>
-  )
-}
-
-function ApplicationsPage(props: StudentWorkspaceProps) {
-  const rows = props.applications.filter((application) => props.applicationStatus === 'All statuses' || application.status.toLowerCase().replaceAll('_', ' ') === props.applicationStatus.toLowerCase())
-  const statusOptions = ['All statuses', 'Submitted', 'Under review', 'Shortlisted', 'Accepted', 'Rejected', 'Withdrawn']
-  return (
-    <div className="page-wrap">
-      <PageIntro eyebrow="KEEP TRACK" title="My applications" description="Every application, every update — all in one place." />
-      <div className="stats-strip">
-        <MiniStat label="Total sent" value={props.applications.length} />
-        <MiniStat label="In review" value={props.applications.filter((item) => ['submitted', 'under_review'].includes(item.status)).length} />
-        <MiniStat label="Shortlisted" value={props.applications.filter((item) => item.status === 'shortlisted').length} />
-        <MiniStat label="Offers" value={props.applications.filter((item) => item.status === 'accepted').length} />
-      </div>
-      <div className="table-card">
-        <div className="table-toolbar"><div><h2>Application history</h2><p>See the latest status from every employer.</p></div><label className="select-with-icon"><Filter size={14} /><select value={props.applicationStatus} onChange={(event) => props.setApplicationStatus(event.target.value)}>{statusOptions.map((item) => <option key={item}>{item}</option>)}</select></label></div>
-        {rows.length === 0 ? <EmptyState title="No applications here yet" detail="When you apply to an internship, it will appear here." /> : <div className="table-scroll"><table><thead><tr><th>Opportunity</th><th>Employer</th><th>Applied</th><th>Match</th><th>Status</th><th /></tr></thead><tbody>
-          {rows.map((application) => <tr key={application.id}><td><strong>{application.title}</strong><small>{application.location}</small></td><td>{application.company}</td><td>{formatDate(application.submitted)}</td><td><span className="table-match">{application.match}%</span></td><td><StatusBadge status={application.status} /></td><td>{!['withdrawn', 'rejected'].includes(application.status) && <button className="table-action" onClick={() => props.onWithdraw(application)}>Withdraw</button>}</td></tr>)}
-        </tbody></table></div>}
-      </div>
-    </div>
-  )
-}
 
 function NotificationsPage({ notifications, onRead }: { notifications: NotificationItem[]; onRead: (id: number) => void }) {
   return (
@@ -1188,25 +966,6 @@ function ProfilePage({ profile, token, loading, onSave }: {
   )
 }
 
-function OpportunityDialog({ opportunity, apply, canApply, loading, onClose, onApply, onStartApply }: {
-  opportunity: Opportunity; apply: boolean; canApply: boolean; loading: boolean; onClose: () => void
-  onApply: (note: string) => void; onStartApply: () => void
-}) {
-  const [note, setNote] = useState('')
-  return (
-    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section className="modal-card opportunity-modal">
-        <button className="modal-close icon-button" onClick={onClose} aria-label="Close"><X size={19} /></button>
-        <div className="modal-company"><div className="company-avatar large">{opportunity.company.slice(0, 1)}</div><div><span className="opportunity-overline">{opportunity.sector} · Verified employer</span><h2>{opportunity.title}</h2><p>{opportunity.company}</p></div></div>
-        <div className="modal-facts"><span><MapPin size={15} />{opportunity.remote ? 'Remote / Hybrid' : opportunity.location}</span><span><Clock3 size={15} />{opportunity.duration} weeks</span><span><BriefcaseBusiness size={15} />{opportunity.slots} open positions</span><span className="modal-match"><Sparkles size={15} />{opportunity.match}% match</span></div>
-        <div className="modal-description"><h3>About this opportunity</h3><p>{opportunity.description}</p><h3>Skills employers are looking for</h3><div className="skill-tags">{opportunity.skills.map((skill) => <span key={skill}>{skill}</span>)}</div><p className="modal-deadline">Applications close {formatDate(opportunity.deadline)}.</p></div>
-        {apply ? <div className="apply-section"><label>Introduce yourself <span>Optional</span><textarea rows={4} maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Why are you interested in this opportunity?" /></label>{!canApply && <div className="form-error">A university coordinator must verify your profile before you can apply.</div>}<button className="button button-primary full-button" disabled={loading || !canApply} onClick={() => onApply(note)}>{loading ? 'Submitting…' : 'Submit application'} <ArrowRight size={15} /></button></div>
-          : <div className="modal-bottom"><span><ShieldCheck size={15} /> Applications require a verified student profile.</span><button className="button button-primary" disabled={!canApply} onClick={onStartApply}>{canApply ? 'Apply for this internship' : 'Awaiting verification'} <ArrowRight size={15} /></button></div>}
-      </section>
-    </div>
-  )
-}
-
 function PageIntro({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) {
   return <div className="page-intro"><div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{description}</p></div>{action}</div>
 }
@@ -1217,16 +976,6 @@ function MiniStat({ label, value, icon }: { label: string; value: string | numbe
 
 function MetricCard({ number, label, detail, icon, color }: { number: string; label: string; detail?: string; icon: ReactNode; color: string }) {
   return <div className={`metric-card ${color}`}><div className="metric-top"><span className="metric-icon">{icon}</span><span className="metric-trend"><ArrowRight size={13} /></span></div><strong>{number}</strong><span className="metric-label">{label}</span>{detail && <small>{detail}</small>}</div>
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const label = status.replaceAll('_', ' ')
-  const cssStatus = status.toLowerCase().replaceAll(' ', '-').replaceAll('_', '-')
-  return <span className={`status-badge status-${cssStatus}`}><i />{label}</span>
-}
-
-function VerificationNotice() {
-  return <div className="verification-notice"><Clock3 size={17} /><div><strong>Profile verification pending</strong><p>You can explore and save opportunities. Your university must verify your profile before you can apply.</p></div><span className="status-badge status-pending"><i />Pending</span></div>
 }
 
 function EmptyState({ title, detail }: { title: string; detail: string }) {

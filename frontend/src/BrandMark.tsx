@@ -1,9 +1,8 @@
-export function BrandMark() {
+export function BrandMark({ suffix }: { suffix?: string }) {
   return (
     <div className="brand-lockup">
-      <span className="brand-icon"><span /><span /><span /></span>
       <span className="brand-name">intern<span>link</span></span>
-      <span className="brand-region">UGANDA</span>
+      {suffix && <span className="brand-region">{suffix}</span>}
     </div>
   )
 }

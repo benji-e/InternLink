@@ -215,3 +215,85 @@ export const roleApi = {
       body: JSON.stringify({ action, reason }),
     }, token),
 }
+
+export type ListingSummary = {
+  listing_id: number
+  title: string
+  company_name: string
+  sector: string
+  location: string
+  is_remote: boolean
+  duration_weeks: number
+  slots_remaining: number
+  application_deadline: string
+  posted_at: string
+  required_skills: string[]
+  application_status?: string | null
+}
+
+export type MatchDetail = {
+  score: number
+  breakdown: Record<'skills' | 'programme' | 'interests' | 'location', number | null>
+  weights: Record<'skills' | 'programme' | 'interests' | 'location', number>
+  matched_skills: string[]
+  missing_skills: string[]
+}
+
+export type ListingDetail = ListingSummary & {
+  description: string
+  slots: number
+  accepted_programmes: string[]
+  optional_skills: string[]
+  days_left: number
+  company_id: number
+  company_description: string | null
+  company_location: string
+  company_website: string | null
+  company_open_listings: number
+  similar: { listing_id: number; title: string; company_name: string }[]
+  match: MatchDetail | null
+  application: { application_id: number; status: string; submitted_at: string } | null
+}
+
+export type SearchResult = {
+  results: ListingSummary[]
+  count: number
+  page: number
+  page_size: number
+  sectors: { name: string; count: number }[]
+}
+
+export type ProgrammeOption = CatalogItem & { department_id: number; department: string }
+
+export type MessageItem = { message_id: number; body: string; sent_at: string; is_read: boolean; mine: boolean; sender_name?: string }
+export type MessageThread = {
+  application: { application_id: number; status: string; title: string; company_name: string }
+  employer_name: string | null
+  messages: MessageItem[]
+  can_reply: boolean
+}
+
+/** Pages that work without signing in. A student token adds match details. */
+export const publicApi = {
+  home: () =>
+    apiRequest<{ latest: ListingSummary[]; universities: string[]; locations: string[] }>('/api/v1/public/home'),
+  search: (query: URLSearchParams, token?: string) =>
+    apiRequest<SearchResult>(`/api/v1/public/opportunities?${query.toString()}`, {}, token),
+  detail: (id: number, token?: string) =>
+    apiRequest<{ opportunity: ListingDetail }>(`/api/v1/public/opportunities/${id}`, {}, token),
+  universityProgrammes: (universityId: number) =>
+    apiRequest<{ programmes: ProgrammeOption[] }>(`/api/v1/public/universities/${universityId}/programmes`),
+  requestUniversity: (input: { university_name: string; requester_email: string; coordinator_email?: string }) =>
+    postJson<{ message: string }>('/api/v1/public/university-requests', input),
+}
+
+export const messageApi = {
+  thread: (token: string, applicationId: number) =>
+    apiRequest<MessageThread>(`/api/v1/students/me/applications/${applicationId}/messages`, {}, token),
+  reply: (token: string, applicationId: number, body: string) =>
+    apiRequest<{ message: MessageItem }>(
+      `/api/v1/students/me/applications/${applicationId}/messages`,
+      { method: 'POST', body: JSON.stringify({ body }) },
+      token,
+    ),
+}
