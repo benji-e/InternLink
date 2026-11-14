@@ -14,7 +14,8 @@ def list_saved(conn, student_id: int) -> list[dict]:
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute(
             """
-            SELECT l.listing_id, l.title, c.name AS company_name, l.sector, l.location, l.is_remote,
+            SELECT l.listing_id, l.title, c.company_id, c.name AS company_name, l.sector, l.location, l.is_remote,
+                   EXISTS (SELECT 1 FROM company_logos cl WHERE cl.company_id = c.company_id) AS has_logo,
                    l.duration_weeks, l.application_deadline, s.saved_at,
                    EXISTS (SELECT 1 FROM v_open_listings v WHERE v.listing_id = l.listing_id) AS is_open,
                    a.status AS application_status

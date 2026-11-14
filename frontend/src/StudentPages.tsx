@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Check } from 'lucide-react'
 import { alertApi, cvApi, MAX_CV_BYTES, messageApi, savedApi, type CvInfo, type JobAlert, type MessageThread, type SavedItem } from './api'
-import { initialsOf, messageOf, SaveButton, shortDate, Wordmark, type SiteSession } from './PublicSite'
+import { CompanyLogo, initialsOf, messageOf, SaveButton, shortDate, Wordmark, type SiteSession } from './PublicSite'
 import { linkTo, navigate } from './router'
 import type { Application, Opportunity, StudentProfile } from './types'
 import './site.css'
@@ -162,7 +162,7 @@ export function StudentHome({ session, profile, applications, recommendations, r
       {!loading && recommendations.length > 0 && <div className="rec-grid">
         {recommendations.slice(0, 6).map((item) => (
           <article key={item.id} className="rec-card">
-            <div className="top"><span className="logo-box">{initialsOf(item.company)}</span><span className="score">{item.match}%</span></div>
+            <div className="top"><CompanyLogo companyId={item.companyId} name={item.company} hasLogo={item.hasLogo} /><span className="score">{item.match}%</span></div>
             <a className="listing-title" {...linkTo(`/internships/${item.id}`)}>{item.title}</a>
             <div className="listing-meta">{item.company} · {item.remote ? 'Remote' : item.location}{item.duration ? ` · ${item.duration} wks` : ''}</div>
             {item.skills.length > 0 && <div className="matches">Matches: {item.skills.join(', ')}</div>}
@@ -317,7 +317,7 @@ export function SavedPage({ session, saved, onChange }: { session: SiteSession; 
       {saved.length === 0 ? <div className="card empty">Nothing saved yet. Use <b>Save</b> on any internship to keep it here. <a {...linkTo('/internships')}>Browse internships</a></div>
         : saved.map((item) => (
           <article key={item.listing_id} className="result-card">
-            <span className="logo-box">{initialsOf(item.company_name)}</span>
+            <CompanyLogo companyId={item.company_id} name={item.company_name} hasLogo={item.has_logo} />
             <div>
               <div className="muted" style={{ fontSize: 13 }}>{item.company_name} · {item.sector}</div>
               {item.is_open ? <a className="listing-title" {...linkTo(`/internships/${item.listing_id}`)}>{item.title}</a> : <span className="listing-title" style={{ textDecoration: 'none' }}>{item.title}</span>}

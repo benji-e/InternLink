@@ -15,8 +15,6 @@ from http.server import BaseHTTPRequestHandler
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
-from urllib.error import HTTPError, URLError
-from urllib.request import Request as URLRequest, urlopen
 
 import jwt
 import psycopg
@@ -42,8 +40,10 @@ from student_module import messages as message_service
 from student_module import public as public_service
 from student_module import admin as admin_service
 from student_module import alerts as alert_service
+from student_module import companies as company_service
 from student_module import cv as cv_service
 from student_module import invites as invite_service
+from student_module import mailer
 from student_module import saved as saved_service
 from student_module import service as student_service
 
@@ -61,33 +61,16 @@ class ConfigurationError(RuntimeError):
     """Raised when an API's required Vercel environment is incomplete."""
 
 
-class ResendMailer:
-    """Deliver employer verification messages through the configured Resend account."""
+class EmployerMailer:
+    """Deliver employer verification messages through Gmail or Resend (see student_module/mailer.py)."""
 
     def send(self, recipient: str, subject: str, body: str) -> None:
-        api_key = os.environ.get("RESEND_API_KEY")
-        from_email = os.environ.get("INTERNLINK_FROM_EMAIL")
-        if not api_key or not from_email:
-            raise ConfigurationError("Email requires RESEND_API_KEY and INTERNLINK_FROM_EMAIL.")
-        data = json.dumps(
-            {
-                "from": from_email,
-                "to": [recipient],
-                "subject": subject,
-                "html": f'<p>Welcome to InternLink.</p><p><a href="{escape(body)}">Verify your email address</a></p>',
-            }
-        ).encode("utf-8")
-        request = URLRequest(
-            "https://api.resend.com/emails",
-            data=data,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
+        html = f'<p>Welcome to InternLink.</p><p><a href="{escape(body)}">Verify your email address</a></p>'
         try:
-            with urlopen(request, timeout=8) as response:
-                if response.status >= 300:
-                    raise RuntimeError(f"Email provider returned HTTP {response.status}")
-        except (HTTPError, URLError, TimeoutError, OSError, RuntimeError) as exc:
+            mailer.send(recipient, subject, html)
+        except mailer.EmailNotConfigured as exc:
+            raise ConfigurationError(str(exc)) from exc
+        except mailer.EmailFailed as exc:
             logger.exception("Could not send employer email verification")
             raise ConfigurationError("Could not send the verification email. Please try again later.") from exc
 
@@ -145,7 +128,7 @@ def _build_employer_context() -> tuple[AppContext, PostgresDatabase]:
     context = AppContext(
         db=db,
         auth=ReferenceTokenService(secret),
-        mailer=ResendMailer(),
+        mailer=EmployerMailer(),
         notifier=MemoryNotifier(),
         storage=cv_service.DatabaseCvStorage(_get_matching_pool(), fallback=LocalFileStorage(cv_root)),
         base_url=base_url,
@@ -235,6 +218,11 @@ class handler(BaseHTTPRequestHandler):
             "/api/v1/coordinator/coordinators": ("GET, POST", self._coordinator_coordinators),
             "/api/v1/auth/invite": ("GET", self._invite_details),
             "/api/v1/auth/accept-invite": ("POST", self._accept_invite),
+            "/api/v1/public/companies": ("GET", self._public_companies),
+            "/api/v1/public/company-requests": ("POST", self._public_company_request),
+            "/api/v1/employer/logo": ("GET, PUT, DELETE", self._employer_logo),
+            "/api/v1/employer/logo/file": ("GET", self._employer_logo_file),
+            "/api/v1/admin/company-requests": ("GET, POST", self._admin_company_requests),
         }
         route = routes.get(path)
         if route:
@@ -246,6 +234,16 @@ class handler(BaseHTTPRequestHandler):
             return
 
         parts = path.strip("/").split("/")
+        if len(parts) in (5, 6) and parts[:4] == ["api", "v1", "public", "companies"] and parts[4].isdigit():
+            if self.command != "GET":
+                self._send_json(405, {"detail": "Method Not Allowed"}, (("Allow", "GET"),))
+                return
+            if len(parts) == 5:
+                self._public_company(int(parts[4]))
+                return
+            if parts[5] == "logo":
+                self._public_company_logo(int(parts[4]))
+                return
         if len(parts) == 6 and parts[:5] == ["api", "v1", "students", "me", "alerts"] and parts[5].isdigit():
             if self.command != "DELETE":
                 self._send_json(405, {"detail": "Method Not Allowed"}, (("Allow", "DELETE"),))
@@ -557,8 +555,8 @@ class handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _require_email_configuration():
-        if not os.environ.get("RESEND_API_KEY") or not os.environ.get("INTERNLINK_FROM_EMAIL"):
-            raise ConfigurationError("Sending email requires RESEND_API_KEY and INTERNLINK_FROM_EMAIL.")
+        if not mailer.is_configured():
+            raise ConfigurationError(mailer.NOT_CONFIGURED_MESSAGE)
 
     @classmethod
     def _send_verification_email(cls, email: str, name: str, verification_url: str):
@@ -573,29 +571,11 @@ class handler(BaseHTTPRequestHandler):
     @classmethod
     def _send_email(cls, email: str, subject: str, html: str):
         cls._require_email_configuration()
-        data = json.dumps(
-            {
-                "from": os.environ["INTERNLINK_FROM_EMAIL"],
-                "to": [email],
-                "subject": subject,
-                "html": html,
-            }
-        ).encode("utf-8")
-        api_key = os.environ["RESEND_API_KEY"]
-        request = URLRequest(
-            "https://api.resend.com/emails",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
         try:
-            with urlopen(request, timeout=8) as response:
-                if response.status >= 300:
-                    raise RuntimeError(f"Email provider returned HTTP {response.status}")
-        except (HTTPError, URLError, TimeoutError, OSError, RuntimeError) as exc:
+            mailer.send(email, subject, html)
+        except mailer.EmailNotConfigured as exc:
+            raise ConfigurationError(str(exc)) from exc
+        except mailer.EmailFailed as exc:
             logger.exception("Could not send an account email")
             raise ConfigurationError("Could not send the email. Please try again later.") from exc
 
@@ -1167,21 +1147,21 @@ class handler(BaseHTTPRequestHandler):
 
     # ---------- CV upload ----------
 
-    def _read_file_body(self, max_bytes: int) -> bytes:
-        """A raw upload body (not JSON), refusing anything over max_bytes."""
+    def _read_upload(self, max_bytes: int, too_large: str) -> bytes:
+        """A raw upload body (not JSON), refusing anything over max_bytes before reading it."""
         try:
             length = int(self.headers.get("Content-Length", "0") or "0")
         except ValueError:
             raise student_service.StudentError(400, "INVALID_CONTENT_LENGTH", "Invalid request length.") from None
         if length <= 0:
-            raise student_service.StudentError(422, "EMPTY_CV", "Choose a file to upload.")
+            raise student_service.StudentError(422, "EMPTY_FILE", "Choose a file to upload.")
         if length > max_bytes:
-            raise student_service.StudentError(413, "CV_TOO_LARGE", "Your CV must be 4 MB or smaller.")
+            raise student_service.StudentError(413, "FILE_TOO_LARGE", too_large)
         return self.rfile.read(length)
 
     def _student_cv(self):
         try:
-            data = self._read_file_body(cv_service.MAX_CV_BYTES) if self.command == "PUT" else b""
+            data = self._read_upload(cv_service.MAX_CV_BYTES, "Your CV must be 4 MB or smaller.") if self.command == "PUT" else b""
         except student_service.StudentError as exc:
             self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
             return
@@ -1204,15 +1184,98 @@ class handler(BaseHTTPRequestHandler):
         cv = self._student_run(run, authenticated=True)
         if cv is None:
             return  # error already sent
-        body = bytes(cv["data"])
+        self._send_file(bytes(cv["data"]), cv["content_type"], (
+            ("Content-Disposition", f"attachment; filename*=UTF-8''{quote(cv['filename'])}"),
+            ("Cache-Control", "no-store"),
+        ))
+
+    def _send_file(self, body: bytes, content_type: str, headers=()):
         self.send_response(200)
-        self.send_header("Content-Type", cv["content_type"])
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(cv['filename'])}")
-        self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
+
+    # ---------- companies ----------
+
+    def _public_companies(self):
+        query = parse_qs(urlsplit(self.path).query)
+        filters = {key: values[-1] for key, values in query.items()}
+        self._student_call(lambda conn, _user_id: company_service.list_companies(conn, filters))
+
+    def _public_company(self, company_id: int):
+        self._student_call(lambda conn, _user_id: {"company": company_service.company_profile(conn, company_id)})
+
+    def _public_company_logo(self, company_id: int):
+        logo = self._student_run(lambda conn, _user_id: company_service.read_logo(conn, company_id))
+        if logo is None:
+            return  # 404 already sent
+        # Short cache: a new logo shows within the hour.
+        self._send_file(bytes(logo["data"]), logo["content_type"], (
+            ("Cache-Control", "public, max-age=3600"),
+            ("Content-Security-Policy", "default-src 'none'"),
+        ))
+
+    def _public_company_request(self):
+        try:
+            payload = self._read_json_request()
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+
+        def save(conn, _user_id):
+            with conn.transaction():
+                return company_service.request_company(conn, payload)
+        self._student_call(save, success_status=201)
+
+    def _employer_company_id(self, conn, user_id: int) -> int:
+        row = conn.execute("SELECT company_id FROM users WHERE user_id = %s AND role = 'employer'", (user_id,)).fetchone()
+        if row is None or row["company_id"] is None:
+            raise student_service.StudentError(403, "EMPLOYER_REQUIRED", "An employer account is required.")
+        return int(row["company_id"])
+
+    def _employer_logo(self):
+        try:
+            data = self._read_upload(company_service.MAX_LOGO_BYTES, "The logo must be 1 MB or smaller.") if self.command == "PUT" else b""
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+
+        def run(conn, user_id):
+            company_id = self._employer_company_id(conn, user_id)
+            if self.command == "GET":
+                return company_service.own_logo_info(conn, company_id)
+            with conn.transaction():
+                conn.execute("SELECT set_config('app.user_id', %s, true)", (str(user_id),))
+                if self.command == "PUT":
+                    company_service.save_logo(conn, company_id, data)
+                else:
+                    company_service.delete_logo(conn, company_id)
+            return company_service.own_logo_info(conn, company_id)
+        self._role_call(run, {"employer"})
+
+    def _employer_logo_file(self):
+        logo = self._role_run(lambda conn, user_id: company_service.read_own_logo(conn, self._employer_company_id(conn, user_id)), {"employer"})
+        if logo is None:
+            return
+        self._send_file(bytes(logo["data"]), logo["content_type"], (("Cache-Control", "no-store"),))
+
+    def _admin_company_requests(self):
+        try:
+            payload = self._read_json_request() if self.command == "POST" else {}
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+
+        def run(conn, user_id):
+            if self.command == "GET":
+                return {"requests": company_service.company_requests(conn)}
+            with conn.transaction():
+                return company_service.close_company_request(conn, payload)
+        self._role_call(run, {"admin"})
 
     # ---------- job alerts ----------
 

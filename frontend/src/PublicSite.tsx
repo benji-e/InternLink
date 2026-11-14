@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import {
-  alertApi, ApiError, cvApi, publicApi, savedApi, studentApi,
+  alertApi, ApiError, companyLogoUrl, cvApi, publicApi, savedApi, studentApi,
   type AuthUser, type ListingDetail, type ListingSummary, type SearchResult,
 } from './api'
+import { SuggestCompany } from './CompanyPages'
+import { EmployerArt, HeroArt, StudentArt, UniversityArt } from './Illustrations'
 import { linkTo, navigate } from './router'
 import './site.css'
 
@@ -34,11 +36,19 @@ function plural(count: number, word: string) {
   return `${count} ${word}${count === 1 ? '' : 's'}`
 }
 
+/** A company's logo, or its initials when it has none (or the image fails to load). */
+export function CompanyLogo({ companyId, name, hasLogo, large }: { companyId?: number | null; name: string; hasLogo?: boolean; large?: boolean }) {
+  const [failed, setFailed] = useState(false)
+  const className = `logo-box ${large ? 'is-lg' : ''}`
+  if (!hasLogo || !companyId || failed) return <span className={className} aria-hidden="true">{initialsOf(name)}</span>
+  return <img className={`${className} logo-img`} src={companyLogoUrl(companyId)} alt={`${name} logo`} loading="lazy" onError={() => setFailed(true)} />
+}
+
 export function Wordmark({ suffix, to = '/' }: { suffix?: string; to?: string }) {
   return <a className="wordmark" {...linkTo(to)}>intern<span>link</span>{suffix && <small>{suffix}</small>}</a>
 }
 
-export function SiteHeader({ session, active }: { session: SiteSession; active?: 'browse' | 'employers' | 'universities' | 'how' }) {
+export function SiteHeader({ session, active }: { session: SiteSession; active?: 'browse' | 'companies' | 'employers' | 'universities' | 'how' }) {
   const [open, setOpen] = useState(false)
   return (
     <header className="site-header">
@@ -47,6 +57,7 @@ export function SiteHeader({ session, active }: { session: SiteSession; active?:
         <Wordmark />
         <nav className={`site-nav ${open ? 'is-open' : ''}`} aria-label="Main">
           <a className={active === 'browse' ? 'is-active' : ''} {...linkTo('/internships')}>Browse internships</a>
+          <a className={active === 'companies' ? 'is-active' : ''} {...linkTo('/companies')}>Companies</a>
           {!session && <>
             <a className={active === 'employers' ? 'is-active' : ''} {...linkTo('/#employers')} onClick={(event) => { event.preventDefault(); scrollToSection('employers') }}>For employers</a>
             <a className={active === 'universities' ? 'is-active' : ''} {...linkTo('/#universities')} onClick={(event) => { event.preventDefault(); scrollToSection('universities') }}>For universities</a>
@@ -82,7 +93,7 @@ export function SiteFooter() {
       <div className="site-container">
         <div><Wordmark /><div className="muted" style={{ fontSize: 14, marginTop: 4 }}>© 2026 InternLink Uganda</div></div>
         <div className="footer-cols">
-          <div><h4>Students</h4><a {...linkTo('/internships')}>Browse internships</a><a {...linkTo('/signup')}>Create account</a></div>
+          <div><h4>Students</h4><a {...linkTo('/internships')}>Browse internships</a><a {...linkTo('/companies')}>Companies</a><a {...linkTo('/signup')}>Create account</a></div>
           <div><h4>Organisations</h4><a {...linkTo('/signup?type=employer')}>Post an internship</a><a {...linkTo('/signup?type=university')}>Join as a university</a></div>
           <div><h4>Help</h4><a href="/#how" onClick={(event) => { event.preventDefault(); scrollToSection('how') }}>How it works</a><a href="mailto:hello@internlink.ug">Contact</a></div>
         </div>
@@ -91,7 +102,7 @@ export function SiteFooter() {
   )
 }
 
-export function SiteLayout({ session, active, grey, children }: { session: SiteSession; active?: 'browse'; grey?: boolean; children: ReactNode }) {
+export function SiteLayout({ session, active, grey, children }: { session: SiteSession; active?: 'browse' | 'companies'; grey?: boolean; children: ReactNode }) {
   return (
     <div className={`site ${grey ? 'is-grey' : ''}`}>
       <SiteHeader session={session} active={active} />
@@ -130,7 +141,7 @@ export function SaveButton({ session, listingId, saved, onChange }: { session: S
 function ListingTile({ listing, session }: { listing: ListingSummary; session: SiteSession }) {
   return (
     <article className="listing-tile">
-      <div className="company-line"><span className="logo-box">{initialsOf(listing.company_name)}</span><span>{listing.company_name} · {listing.sector}</span></div>
+      <div className="company-line"><CompanyLogo companyId={listing.company_id} name={listing.company_name} hasLogo={listing.has_logo} /><span>{listing.company_name} · {listing.sector}</span></div>
       <a className="listing-title" {...linkTo(`/internships/${listing.listing_id}`)}>{listing.title}</a>
       <div className="listing-meta">{workplace(listing)} · {listing.duration_weeks} weeks · {plural(listing.slots_remaining, 'position')}</div>
       <div className="listing-foot"><span>Closes {shortDate(listing.application_deadline)}</span><SaveButton session={session} listingId={listing.listing_id} saved={listing.saved} /></div>
@@ -182,7 +193,7 @@ export function HomePage({ session }: { session: SiteSession }) {
             </form>
             <div className="popular">Popular: {POPULAR.map((item) => <button key={item} type="button" onClick={() => search(undefined, item)}>{item}</button>)}</div>
           </div>
-          <div className="placeholder-box hero-photo" role="img" aria-label="Students working with a mentor">Students working with a mentor</div>
+          <div className="hero-photo"><HeroArt /></div>
         </div>
       </section>
 
@@ -212,19 +223,19 @@ export function HomePage({ session }: { session: SiteSession }) {
           <h2 style={{ fontSize: 28, marginBottom: 18 }}>Who InternLink is for</h2>
           <div className="audience-grid">
             <article className="audience-card" id="students">
-              <div className="placeholder-box">Students</div>
+              <StudentArt />
               <h3>Students</h3>
               <ul><li>Recommendations based on your course and skills</li><li>Apply with one profile</li><li>Track applications and message employers</li></ul>
               <a className="btn btn-primary" {...linkTo('/signup?type=student')}>Create a student account</a>
             </article>
             <article className="audience-card" id="employers">
-              <div className="placeholder-box">Employers</div>
+              <EmployerArt />
               <h3>Employers</h3>
               <ul><li>Post internships for free</li><li>See applicants ranked by fit</li><li>Shortlist, message and make offers</li></ul>
               <a className="btn" {...linkTo('/signup?type=employer')}>Register your company</a>
             </article>
             <article className="audience-card" id="universities">
-              <div className="placeholder-box">Universities</div>
+              <UniversityArt />
               <h3>Universities</h3>
               <ul><li>Verify your students</li><li>Approve placements</li><li>Export placement reports</li></ul>
               <a className="btn" {...linkTo('/signup?type=university')}>Bring your university on board</a>
@@ -382,10 +393,13 @@ export function InternshipsPage({ session, search }: { session: SiteSession; sea
             </div>
             {!session && <div className="signin-strip"><span>Sign in to see how well each internship matches your course and skills.</span><a className="btn btn-primary btn-sm" {...linkTo('/signin')}>Sign in</a></div>}
             {error && <div className="notice is-error">{error}</div>}
-            {result && result.results.length === 0 && <div className="card empty">No internships match these filters. Try clearing some.</div>}
+            {result && result.results.length === 0 && <>
+              <div className="card empty">No internships match these filters. Try clearing some, or look through <a {...linkTo(`/companies${params.get('q') ? `?q=${encodeURIComponent(params.get('q') ?? '')}` : ''}`)}>companies</a>.</div>
+              {params.get('q') && <SuggestCompany initialName={params.get('q') ?? ''} />}
+            </>}
             {result?.results.map((item) => (
               <article key={item.listing_id} className="result-card">
-                <span className="logo-box">{initialsOf(item.company_name)}</span>
+                <CompanyLogo companyId={item.company_id} name={item.company_name} hasLogo={item.has_logo} />
                 <div>
                   <div className="muted" style={{ fontSize: 13 }}>{item.company_name} · Verified employer</div>
                   <a className="listing-title" {...linkTo(`/internships/${item.listing_id}`)}>{item.title}</a>
@@ -467,7 +481,7 @@ export function InternshipDetailPage({ session, id, onApplied }: { session: Site
           <div className="detail-main">
             <section className="card">
               <div className="company-line" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                <span className="logo-box is-lg">{initialsOf(listing.company_name)}</span>
+                <CompanyLogo companyId={listing.company_id} name={listing.company_name} hasLogo={listing.has_logo} large />
                 <div><b>{listing.company_name}</b><div style={{ color: 'var(--s-green)', fontSize: 13, fontWeight: 600 }}>Verified employer</div></div>
               </div>
               <h1 className="detail-title">{listing.title}</h1>
@@ -533,10 +547,10 @@ export function InternshipDetailPage({ session, id, onApplied }: { session: Site
             </section>
             <section className="card">
               <div className="side-label">About the company</div>
-              <b style={{ fontSize: 17 }}>{listing.company_name}</b>
+              <a style={{ fontSize: 17, fontWeight: 700 }} {...linkTo(`/companies/${listing.company_id}`)}>{listing.company_name}</a>
               <p className="muted" style={{ fontSize: 14 }}>{listing.company_description || `${listing.sector} · ${listing.company_location}`}</p>
               {listing.company_website && <p style={{ fontSize: 14, margin: '0 0 6px' }}><a href={listing.company_website} target="_blank" rel="noreferrer noopener">Company website</a></p>}
-              {listing.company_open_listings > 1 && <a style={{ fontSize: 14 }} {...linkTo(`/internships?q=${encodeURIComponent(listing.company_name)}`)}>See all {listing.company_open_listings} internships from this company</a>}
+              <a style={{ fontSize: 14 }} {...linkTo(`/companies/${listing.company_id}`)}>{listing.company_open_listings > 1 ? `See all ${listing.company_open_listings} internships from this company` : 'View company profile'}</a>
             </section>
             {listing.similar.length > 0 && <section className="card">
               <div className="side-label">Similar internships</div>

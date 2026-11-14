@@ -144,7 +144,8 @@ class VercelEntryPointTests(ServerTestCase):
             headers={"Content-Length": str(5 * 1024 * 1024), "Content-Type": "application/pdf"},
         )
         self.assertEqual(status, 413)
-        self.assertEqual(json.loads(body)["error"]["code"], "CV_TOO_LARGE")
+        self.assertEqual(json.loads(body)["error"]["code"], "FILE_TOO_LARGE")
+        self.assertIn("4 MB", json.loads(body)["error"]["message"])
 
     def test_unknown_route_returns_not_found(self):
         status, _, body = self.request("/not-an-api-route")
@@ -176,7 +177,8 @@ class AccountEndpointTests(ServerTestCase):
             "/api/v1/auth/resend-verification",
             "/api/v1/auth/register-university",
         )
-        with patch.dict(os.environ, {"RESEND_API_KEY": "", "INTERNLINK_FROM_EMAIL": ""}):
+        no_email = {"RESEND_API_KEY": "", "INTERNLINK_FROM_EMAIL": "", "SMTP_USER": "", "SMTP_PASSWORD": ""}
+        with patch.dict(os.environ, no_email):
             for path in paths:
                 with self.subTest(path=path):
                     status, _, body = self.post_json(path, {"email": "someone@example.com"})

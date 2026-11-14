@@ -5,10 +5,11 @@ import {
 import { ApiError, employerRequest, roleApi, savedApi, studentApi, type SavedItem, type AuthUser, type CatalogItem, type CoordinatorCatalog } from './api'
 import { AcceptInvitePage, AuthGate, isAuthLinkPath } from './AuthPages'
 import { HomePage, InternshipDetailPage, InternshipsPage } from './PublicSite'
+import { CompaniesPage, CompanyPage } from './CompanyPages'
 import { CvCard, SavedPage, StudentApplications, StudentHome, StudentShell, type StudentPage } from './StudentPages'
 import {
   AdminRequests, CoordinatorApprovals, CoordinatorOverview, CoordinatorStudents, CoordinatorVerify,
-  AdminUniversities, CoordinatorTeamPage, EmployerApplicant, EmployerBoard, OrgShell, PlacedInterns, type OrgNavItem,
+  AdminUniversities, CoordinatorTeamPage, EmployerApplicant, EmployerCompanyProfile, EmployerBoard, OrgShell, PlacedInterns, type OrgNavItem,
 } from './OrgPages'
 import { navigate, useLocation } from './router'
 import type { Application, Opportunity, Page, Role, StudentProfile } from './types'
@@ -66,6 +67,8 @@ function mapOpportunity(row: Record<string, unknown>, index: number): Opportunit
     skills: Array.isArray(row.required_skills) ? row.required_skills.map(String) : Array.isArray(row.matched_skills) ? row.matched_skills.map(String) : [],
     match: Number(row.score ?? row.match ?? 0),
     appliedStatus: typeof row.application_status === 'string' ? row.application_status : row.applied ? 'applied' : null,
+    companyId: typeof row.company_id === 'number' ? row.company_id : null,
+    hasLogo: Boolean(row.has_logo),
   }
 }
 
@@ -302,7 +305,8 @@ function App() {
 
   // Redirects happen after render: signed-out visitors go to sign-in, signed-in users skip it.
   const signedIn = Boolean(session && role)
-  const isPublicPath = path === '/' || path === '/internships' || path === '/accept-invite' || /^\/internships\/\d+$/.test(path)
+  const isPublicPath = path === '/' || path === '/internships' || path === '/companies' || path === '/accept-invite'
+    || /^\/(internships|companies)\/\d+$/.test(path)
   const isAuthPath = path === '/signin' || path === '/signup' || isAuthLinkPath(path)
   const redirect = !signedIn && !isPublicPath && !isAuthPath ? `/signin?next=${encodeURIComponent(path + urlSearch)}`
     : signedIn && (path === '/signin' || path === '/signup') ? '/dashboard' : null
@@ -316,6 +320,9 @@ function App() {
   if (path === '/') return <HomePage session={siteSession} />
   if (path === '/accept-invite') return <AcceptInvitePage search={urlSearch} />
   if (path === '/internships') return <InternshipsPage session={siteSession} search={urlSearch} />
+  if (path === '/companies') return <CompaniesPage session={siteSession} search={urlSearch} />
+  const companyMatch = /^\/companies\/(\d+)$/.exec(path)
+  if (companyMatch) return <CompanyPage session={siteSession} id={Number(companyMatch[1])} />
   const detailMatch = /^\/internships\/(\d+)$/.exec(path)
   if (detailMatch) return <InternshipDetailPage session={siteSession} id={Number(detailMatch[1])} onApplied={() => session && void loadLiveStudent(session)} />
 
@@ -355,6 +362,7 @@ function App() {
           { page: 'applicants', label: 'Applicants' },
           { page: 'messages', label: 'Messages', count: unread },
           { page: 'placed', label: 'Placed interns' },
+          { page: 'company', label: 'Company profile' },
         ] as OrgNavItem<Page>[]}
         action={<button className="btn btn-primary btn-sm" onClick={() => changePage('listings')}>Post an internship</button>}>
         {page === 'applicants' && <EmployerBoard token={session.token} listings={employerListings} listingId={selectedListingId} onListing={setSelectedListingId}
@@ -363,6 +371,7 @@ function App() {
           onOpen={(id) => setSelectedApplicant((current) => current && { ...current, id })} onBack={() => { setPage('applicants'); void loadLiveRole(session) }}
           onMessage={(row) => { setSelectedMessageConversation(row); setPage('messages') }} toast={setToast} />}
         {page === 'placed' && <PlacedInterns token={session.token} />}
+        {page === 'company' && <EmployerCompanyProfile token={session.token} toast={setToast} />}
         {page === 'messages' && <div className="legacy-panel">
             <EmployerMessages token={session.token} conversations={employerConversations} initialConversation={selectedMessageConversation} toast={setToast} onRefresh={() => loadLiveRole(session)} />
         </div>}

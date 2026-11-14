@@ -100,7 +100,8 @@
 .popular { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; font-size: 13px; color: var(--s-muted); }
 .popular button { border: 1.5px solid var(--s-line); background: #fff; border-radius: 999px; padding: 5px 12px; font: 500 13px 'Inter', sans-serif; color: var(--s-ink); cursor: pointer; }
 .popular button:hover { border-color: var(--s-blue); color: var(--s-blue); }
-.hero-photo { min-height: 280px; }
+.hero-photo { min-height: 280px; border-radius: var(--s-radius); overflow: hidden; display: flex; }
+.hero-art { display: block; width: 100%; height: 100%; min-height: 280px; }
 .band { background: var(--s-canvas); }
 .partner-band { padding: 18px 0; }
 .partner-band .site-container { display: flex; align-items: center; gap: 18px; }
@@ -114,6 +115,19 @@
 .listing-tile .company-line { display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--s-muted); }
 .logo-box { width: 40px; height: 40px; flex: 0 0 40px; border-radius: 8px; background: var(--s-placeholder); display: grid; place-items: center; font-weight: 700; color: var(--s-muted); font-size: 14px; }
 .logo-box.is-lg { width: 52px; height: 52px; flex-basis: 52px; font-size: 18px; }
+.logo-box.is-xl { width: 88px; height: 88px; flex-basis: 88px; font-size: 26px; }
+/* Real logos sit on white so transparent PNGs look right. */
+.logo-img { object-fit: contain; background: #fff; border: 1px solid var(--s-line-soft); padding: 3px; }
+.logo-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.btn.is-disabled { opacity: .55; cursor: not-allowed; }
+.company-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.company-card { display: flex; gap: 14px; align-items: flex-start; background: #fff; border: 1.5px solid var(--s-line); border-radius: 12px; padding: 16px; text-decoration: none; color: var(--s-ink); }
+.site a.company-card { color: var(--s-ink); }
+.company-card:hover { border-color: var(--s-blue); }
+.company-card b { display: block; font-size: 17px; overflow-wrap: anywhere; }
+.companies-search { grid-template-columns: 2fr 1fr auto; }
+@media (max-width: 1000px) { .company-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) { .company-grid { grid-template-columns: 1fr; } }
 .listing-title { font-weight: 700; font-size: 17px; color: var(--s-ink); text-decoration: underline; text-underline-offset: 2px; }
 .site a.listing-title { color: var(--s-ink); }
 .listing-meta { font-size: 13px; color: var(--s-text); }
@@ -121,6 +135,7 @@
 .audience-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .audience-card { background: #fff; border: 1.5px solid var(--s-line); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
 .audience-card .placeholder-box { height: 96px; }
+.audience-art { display: block; width: 100%; height: auto; border-radius: 10px; }
 .audience-card h3 { font-size: 20px; }
 .audience-card ul { margin: 0; padding-left: 20px; color: var(--s-text); font-size: 14px; display: grid; gap: 4px; flex: 1; }
 .steps-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
@@ -345,7 +360,7 @@
   .site-header .hide-sm { display: none; }
   .hero-grid, .audience-grid, .signup-grid, .type-grid, .field-pair, .browse-grid, .search-row { grid-template-columns: 1fr; }
   .hero h1 { font-size: 34px; }
-  .hero-photo { min-height: 160px; }
+  .hero-photo, .hero-art { min-height: 200px; }
   .search-bar { flex-direction: column; }
   .partner-band .site-container { flex-direction: column; align-items: stretch; }
   .partner-list { grid-template-columns: 1fr 1fr; }

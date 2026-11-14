@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type DragEvent, type FormEvent, type ReactNode } from 'react'
 import {
-  adminApi, coordinatorTeamApi, employerDownload, employerRequest, roleApi, studentApi,
-  type CatalogItem, type CoordinatorRow, type RegistrationDetail, type UniversityRequest, type VerifiedUniversity,
+  adminApi, companyRequestApi, coordinatorTeamApi, employerDownload, employerLogoApi, employerRequest, MAX_LOGO_BYTES, roleApi, studentApi,
+  type CatalogItem, type CompanyRequest, type CoordinatorRow, type RegistrationDetail, type UniversityRequest, type VerifiedUniversity,
 } from './api'
 import { initialsOf, messageOf, shortDate, Wordmark } from './PublicSite'
 import './site.css'
@@ -659,7 +659,7 @@ export function CoordinatorStudents({ data, reports }: { data: CoordinatorData; 
 /* ---------------------------------------------------------------- admin */
 
 export function AdminRequests({ token, registrations, onReload, toast }: { token: string; registrations: Row[]; onReload: () => void; toast: (message: string) => void }) {
-  const [tab, setTab] = useState<'company' | 'university' | 'students'>('company')
+  const [tab, setTab] = useState<'company' | 'university' | 'students' | 'suggested'>('company')
   const list = registrations.filter((row) => row.org_type === tab)
   const [selected, setSelected] = useState<number | null>(null)
   const current = list.find((row) => Number(row.org_id) === selected) ?? list[0]
@@ -716,14 +716,14 @@ export function AdminRequests({ token, registrations, onReload, toast }: { token
       <div className="apps-head">
         <h1>Organisation requests</h1>
         <div className="tabs" role="tablist">
-          {(['company', 'university', 'students'] as const).map((key) => (
+          {(['company', 'university', 'students', 'suggested'] as const).map((key) => (
             <button key={key} role="tab" aria-selected={tab === key} className={`btn btn-sm ${tab === key ? 'is-current' : ''}`} onClick={() => { setTab(key); setSelected(null) }}>
-              {key === 'company' ? `Companies (${count('company')})` : key === 'university' ? `Universities (${count('university')})` : 'Student requests for a university'}
+              {key === 'company' ? `Companies (${count('company')})` : key === 'university' ? `Universities (${count('university')})` : key === 'students' ? 'Student requests for a university' : 'Company suggestions'}
             </button>
           ))}
         </div>
       </div>
-      {tab === 'students' ? (
+      {tab === 'suggested' ? <CompanySuggestions token={token} toast={toast} /> : tab === 'students' ? (
         <section className="card" style={{ padding: 0 }}>
           {!requests && <div className="empty">Loading…</div>}
           {requests?.length === 0 && <div className="empty">No open requests. Students ask for their university at sign-up.</div>}
@@ -919,5 +919,173 @@ export function AdminUniversities({ token, toast }: { token: string; toast: (mes
         </div>
       </div>}
     </>
+  )
+}
+
+/* ------------------------------------------------- employer company profile */
+
+type CompanyForm = { sector: string; location: string; description: string; contact_email: string; website: string }
+
+/** The employer's company page: logo plus the details students see. */
+export function EmployerCompanyProfile({ token, toast }: { token: string; toast: (message: string) => void }) {
+  const [company, setCompany] = useState<Row | null>(null)
+  const [banner, setBanner] = useState('')
+  const [form, setForm] = useState<CompanyForm>({ sector: '', location: '', description: '', contact_email: '', website: '' })
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState(false)
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [logoBusy, setLogoBusy] = useState(false)
+  const [logoError, setLogoError] = useState('')
+
+  useEffect(() => {
+    employerRequest<{ company: Row; banner: string | null }>('get_company', token).then((result) => {
+      setCompany(result.company)
+      setBanner(result.banner ?? '')
+      setForm({
+        sector: String(result.company.sector ?? ''), location: String(result.company.location ?? ''),
+        description: String(result.company.description ?? ''), contact_email: String(result.company.contact_email ?? ''),
+        website: String(result.company.website ?? ''),
+      })
+    }).catch((reason: unknown) => toast(messageOf(reason)))
+  }, [token])
+
+  useEffect(() => {
+    let url: string | null = null
+    employerLogoApi.preview(token).then((preview) => { url = preview; setLogoUrl(preview) })
+    return () => { if (url) URL.revokeObjectURL(url) }
+  }, [token])
+
+  async function uploadLogo(file: File | undefined) {
+    if (!file) return
+    setLogoError('')
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setLogoError('Upload the logo as a PNG, JPG or WebP image.')
+      return
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      setLogoError('The logo must be 1 MB or smaller.')
+      return
+    }
+    setLogoBusy(true)
+    try {
+      await employerLogoApi.upload(token, file)
+      if (logoUrl) URL.revokeObjectURL(logoUrl)
+      setLogoUrl(await employerLogoApi.preview(token))
+      toast('Logo updated.')
+    } catch (reason) {
+      setLogoError(messageOf(reason))
+    } finally {
+      setLogoBusy(false)
+    }
+  }
+
+  async function removeLogo() {
+    setLogoBusy(true)
+    try {
+      await employerLogoApi.remove(token)
+      if (logoUrl) URL.revokeObjectURL(logoUrl)
+      setLogoUrl(null)
+      toast('Logo removed.')
+    } catch (reason) {
+      setLogoError(messageOf(reason))
+    } finally {
+      setLogoBusy(false)
+    }
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    setErrors({})
+    try {
+      await employerRequest('update_company', token, form)
+      toast('Company details saved.')
+    } catch (reason) {
+      toast(messageOf(reason))
+      if (reason && typeof reason === 'object' && 'fields' in reason) setErrors((reason as { fields: Record<string, string> }).fields)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const update = (name: keyof CompanyForm, value: string) => setForm((current) => ({ ...current, [name]: value }))
+  if (!company) return <div className="card empty">Loading…</div>
+  const name = String(company.name)
+  return (
+    <>
+      <div className="apps-head">
+        <h1>Company profile</h1>
+        {company.verification_status === 'verified' && <a className="btn btn-sm" href={`/companies/${String(company.company_id)}`} target="_blank" rel="noreferrer">View public page</a>}
+      </div>
+      {banner && <div className={`notice ${company.verification_status === 'verified' ? 'is-ok' : ''}`} style={{ marginBottom: 14 }}>{banner}</div>}
+      <section className="card" style={{ marginBottom: 16 }} aria-label="Logo">
+        <h2>Logo</h2>
+        <p className="muted" style={{ fontSize: 14, marginTop: 4 }}>Shown on your internships and company page. PNG, JPG or WebP, up to 1 MB. A square image works best.</p>
+        <div className="logo-row">
+          {logoUrl ? <img className="logo-box is-xl logo-img" src={logoUrl} alt={`${name} logo`} /> : <span className="logo-box is-xl">{initialsOf(name)}</span>}
+          <label className={`btn ${logoBusy ? 'is-disabled' : ''}`}>
+            <input type="file" className="sr-only" accept="image/png,image/jpeg,image/webp" disabled={logoBusy}
+              onChange={(event) => { void uploadLogo(event.target.files?.[0]); event.target.value = '' }} />
+            {logoBusy ? 'Uploading…' : logoUrl ? 'Replace logo' : 'Upload logo'}
+          </label>
+          {logoUrl && <button className="btn btn-danger" disabled={logoBusy} onClick={() => void removeLogo()}>Remove</button>}
+        </div>
+        {logoError && <div className="notice is-error" role="alert" style={{ marginTop: 10 }}>{logoError}</div>}
+      </section>
+      <section className="card">
+        <h2>{name}</h2>
+        <p className="muted" style={{ fontSize: 14, marginTop: 4 }}>The company name can only be changed by the InternLink team.</p>
+        <form className="stack" onSubmit={(event) => void save(event)}>
+          <div className="field-pair">
+            <label className="field">Sector<input value={form.sector} onChange={(event) => update('sector', event.target.value)} required maxLength={100} />{errors.sector && <small className="amber">{errors.sector}</small>}</label>
+            <label className="field">Location<input value={form.location} onChange={(event) => update('location', event.target.value)} required maxLength={150} />{errors.location && <small className="amber">{errors.location}</small>}</label>
+          </div>
+          <label className="field">About the company <small>Students read this on your company page.</small>
+            <textarea rows={5} value={form.description} onChange={(event) => update('description', event.target.value)} maxLength={5000} />
+          </label>
+          <div className="field-pair">
+            <label className="field">Contact email<input type="email" value={form.contact_email} onChange={(event) => update('contact_email', event.target.value)} required />{errors.contact_email && <small className="amber">{errors.contact_email}</small>}</label>
+            <label className="field">Website<input type="url" placeholder="https://" value={form.website} onChange={(event) => update('website', event.target.value)} />{errors.website && <small className="amber">{errors.website}</small>}</label>
+          </div>
+          <div><button className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save details'}</button></div>
+        </form>
+      </section>
+    </>
+  )
+}
+
+/** Admin: companies students asked for. */
+export function CompanySuggestions({ token, toast }: { token: string; toast: (message: string) => void }) {
+  const [rows, setRows] = useState<CompanyRequest[] | null>(null)
+  useEffect(() => {
+    companyRequestApi.list(token).then((result) => setRows(result.requests)).catch((reason: unknown) => toast(messageOf(reason)))
+  }, [token])
+
+  async function close(name: string, status: 'invited' | 'declined') {
+    try {
+      await companyRequestApi.close(token, name, status)
+      setRows((current) => current?.filter((item) => item.company_name !== name) ?? null)
+      toast(status === 'invited' ? `Marked ${name} as invited.` : `Declined suggestions for ${name}.`)
+    } catch (reason) {
+      toast(messageOf(reason))
+    }
+  }
+
+  return (
+    <section className="card" style={{ padding: 0 }}>
+      {!rows && <div className="empty">Loading…</div>}
+      {rows?.length === 0 && <div className="empty">No open suggestions. Students suggest companies when a search finds nothing.</div>}
+      {!!rows?.length && <div style={{ overflowX: 'auto' }}><table className="s-table">
+        <thead><tr><th>Company</th><th>Students asking</th><th>Website</th><th>Latest</th><th /></tr></thead>
+        <tbody>{rows.map((item) => (
+          <tr key={item.company_name}>
+            <td><b>{item.company_name}</b></td><td>{item.requests}</td>
+            <td>{item.websites.length ? item.websites.map((site) => <a key={site} href={site} target="_blank" rel="noreferrer noopener" style={{ display: 'block' }}>{site}</a>) : <span className="muted">Not given</span>}</td>
+            <td>{shortDate(item.last_requested_at)}</td>
+            <td><div style={{ display: 'flex', gap: 6 }}><button className="btn btn-sm" onClick={() => void close(item.company_name, 'invited')}>Mark invited</button><button className="btn btn-sm btn-danger" onClick={() => void close(item.company_name, 'declined')}>Decline</button></div></td>
+          </tr>
+        ))}</tbody>
+      </table></div>}
+    </section>
   )
 }
