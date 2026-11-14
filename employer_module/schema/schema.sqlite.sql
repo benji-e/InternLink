@@ -171,9 +171,12 @@ CREATE TABLE IF NOT EXISTS applications (
     match_score    REAL,
     status         TEXT NOT NULL DEFAULT 'submitted'
                    CONSTRAINT ck_applications_status
-                   CHECK (status IN ('submitted', 'under_review', 'shortlisted', 'accepted', 'rejected')),
+                   CHECK (status IN ('submitted', 'under_review', 'shortlisted', 'interview', 'accepted', 'rejected')),
     submitted_at   TEXT NOT NULL DEFAULT (datetime('now')),
     decided_at     TEXT,
+    interview_at   TEXT,
+    interview_note TEXT,
+    decision_note  TEXT,
     CONSTRAINT uq_applications_listing_student UNIQUE (listing_id, student_id)
 );
 
@@ -253,7 +256,9 @@ SELECT a.application_id,
        a.match_score,
        a.status,
        a.submitted_at,
-       sp.cv_path
+       sp.cv_path,
+       1                 AS student_verified,  -- verification lives in the shared schema
+       a.interview_at
 FROM applications a
 JOIN listings l         ON l.listing_id = a.listing_id
 JOIN student_profiles sp ON sp.student_id = a.student_id

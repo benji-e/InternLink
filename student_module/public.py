@@ -93,22 +93,28 @@ def search_opportunities(conn, filters: dict[str, str], student_id: int | None =
         count = cur.execute(f"SELECT count(*) AS n FROM v_open_listings v WHERE {where}", where_params).fetchone()["n"]
         rows = cur.execute(
             f"""
-            SELECT {LISTING_COLUMNS}, a.status AS application_status
+            SELECT {LISTING_COLUMNS}, a.status AS application_status,
+                   EXISTS (SELECT 1 FROM saved_listings sl WHERE sl.listing_id = v.listing_id AND sl.student_id = %s) AS saved
             FROM v_open_listings v
             LEFT JOIN applications a ON a.listing_id = v.listing_id AND a.student_id = %s
             WHERE {where}
             ORDER BY {SORTS[sort]}
             LIMIT %s OFFSET %s
             """,
-            [student_id, *where_params, page_size, (page - 1) * page_size],
+            [student_id, student_id, *where_params, page_size, (page - 1) * page_size],
         ).fetchall()
     return {"results": rows, "count": int(count), "page": page, "page_size": page_size, "sectors": sectors}
 
 
-def home(conn) -> dict:
+def home(conn, student_id: int | None = None) -> dict:
     with conn.cursor(row_factory=dict_row) as cur:
         latest = cur.execute(
-            f"SELECT {LISTING_COLUMNS} FROM v_open_listings v ORDER BY v.posted_at DESC, v.listing_id DESC LIMIT 4"
+            f"""
+            SELECT {LISTING_COLUMNS},
+                   EXISTS (SELECT 1 FROM saved_listings sl WHERE sl.listing_id = v.listing_id AND sl.student_id = %s) AS saved
+            FROM v_open_listings v ORDER BY v.posted_at DESC, v.listing_id DESC LIMIT 4
+            """,
+            (student_id,),
         ).fetchall()
         universities = cur.execute(
             "SELECT name FROM universities WHERE status = 'verified' ORDER BY name LIMIT 8"
@@ -192,8 +198,12 @@ def opportunity_detail(conn, listing_id: int, student_id: int | None = None) -> 
         ).fetchone()["n"]
         listing["match"] = None
         listing["application"] = None
+        listing["saved"] = False
         if student_id is not None:
             listing["match"] = _match(cur, listing_id, student_id)
+            listing["saved"] = cur.execute(
+                "SELECT 1 FROM saved_listings WHERE listing_id = %s AND student_id = %s", (listing_id, student_id)
+            ).fetchone() is not None
             listing["application"] = cur.execute(
                 "SELECT application_id, status, submitted_at FROM applications WHERE listing_id = %s AND student_id = %s",
                 (listing_id, student_id),

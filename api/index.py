@@ -40,6 +40,8 @@ from student_module import accounts as account_service
 from student_module import catalog as catalog_service
 from student_module import messages as message_service
 from student_module import public as public_service
+from student_module import admin as admin_service
+from student_module import saved as saved_service
 from student_module import service as student_service
 
 logger = logging.getLogger("internlink.vercel")
@@ -218,6 +220,8 @@ class handler(BaseHTTPRequestHandler):
             "/api/v1/opportunities": ("GET", self._student_opportunities),
             "/api/v1/students/me/applications": ("GET, POST", self._student_applications),
             "/api/v1/students/me/notifications": ("GET", self._student_notifications),
+            "/api/v1/students/me/saved": ("GET", self._student_saved_list),
+            "/api/v1/admin/university-requests": ("GET, POST", self._admin_university_requests),
         }
         route = routes.get(path)
         if route:
@@ -275,10 +279,19 @@ class handler(BaseHTTPRequestHandler):
             self._student_mark_notification_read(int(parts[5]))
             return
         if len(parts) == 6 and parts[:4] == ["api", "v1", "admin", "registrations"] and parts[5].isdigit():
+            if self.command == "GET":
+                self._admin_registration_detail(parts[4], int(parts[5]))
+                return
             if self.command != "POST":
-                self._send_json(405, {"detail": "Method Not Allowed"}, (("Allow", "POST"),))
+                self._send_json(405, {"detail": "Method Not Allowed"}, (("Allow", "GET, POST"),))
                 return
             self._admin_decide_registration(parts[4], int(parts[5]))
+            return
+        if len(parts) == 6 and parts[:5] == ["api", "v1", "students", "me", "saved"] and parts[5].isdigit():
+            if self.command not in ("PUT", "DELETE"):
+                self._send_json(405, {"detail": "Method Not Allowed"}, (("Allow", "PUT, DELETE"),))
+                return
+            self._student_saved_change(int(parts[5]))
             return
         if len(parts) == 5 and parts[:4] == ["api", "v1", "admin", "users"] and parts[4].isdigit():
             if self.command != "PATCH":
@@ -653,6 +666,24 @@ class handler(BaseHTTPRequestHandler):
             {"admin"},
         )
 
+    def _admin_registration_detail(self, org_type: str, org_id: int):
+        self._role_call(lambda conn, _user_id: {"registration": admin_service.registration_detail(conn, org_type, org_id)}, {"admin"})
+
+    def _admin_university_requests(self):
+        try:
+            payload = self._read_json_request() if self.command == "POST" else {}
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+
+        def run(conn, user_id):
+            if self.command == "GET":
+                return {"requests": admin_service.university_requests(conn)}
+            with conn.transaction():
+                conn.execute("SELECT set_config('app.user_id', %s, true)", (str(user_id),))
+                return admin_service.close_university_request(conn, payload)
+        self._role_call(run, {"admin"})
+
     def _admin_users(self):
         self._role_call(
             lambda conn, _user_id: {
@@ -781,7 +812,9 @@ class handler(BaseHTTPRequestHandler):
                 """
                 SELECT sp.student_id, u.full_name, u.email, sp.student_number, p.name AS programme,
                        sp.year_of_study, sp.verified,
-                       coalesce(ps.placement_state, 'unplaced') AS placement_status
+                       coalesce(ps.placement_state, 'unplaced') AS placement_status,
+                       sp.created_at AS registered_at,
+                       (SELECT count(*) FROM applications ap WHERE ap.student_id = sp.student_id) AS applications_count
                 FROM student_profiles sp
                 JOIN users u ON u.user_id = sp.user_id
                 JOIN programmes p ON p.programme_id = sp.programme_id
@@ -799,11 +832,14 @@ class handler(BaseHTTPRequestHandler):
             scope = self._coordinator_scope(conn, user_id)
             rows = conn.execute(
                 """
-                SELECT placement_id, queued_at, student_id, student_name, student_number,
-                       programme, company_name, listing_title, application_id
-                FROM v_pending_placements
-                WHERE university_id = %s AND (%s::bigint IS NULL OR department_id = %s)
-                ORDER BY queued_at
+                SELECT v.placement_id, v.queued_at, v.student_id, v.student_name, v.student_number,
+                       v.programme, v.company_name, v.listing_title, v.application_id,
+                       l.location, l.is_remote, l.duration_weeks
+                FROM v_pending_placements v
+                JOIN applications a ON a.application_id = v.application_id
+                JOIN listings l ON l.listing_id = a.listing_id
+                WHERE v.university_id = %s AND (%s::bigint IS NULL OR v.department_id = %s)
+                ORDER BY v.queued_at
                 """,
                 (scope["university_id"], scope["department_id"], scope["department_id"]),
             ).fetchall()
@@ -868,24 +904,45 @@ class handler(BaseHTTPRequestHandler):
         if action == "rejected" and (not isinstance(reason, str) or not reason.strip()):
             self._send_json(422, {"error": {"code": "REJECTION_REASON_REQUIRED", "message": "Provide a reason for rejection."}})
             return
+        # A confirmed placement needs dates. The start defaults to today and the
+        # end follows from the internship's length in weeks.
+        start_date = None
+        if action == "confirmed" and payload.get("start_date"):
+            try:
+                start_date = date.fromisoformat(str(payload["start_date"]))
+            except ValueError:
+                self._send_json(422, {"error": {"code": "INVALID_DATE", "message": "Choose a valid start date."}})
+                return
 
         def decide(conn, user_id):
             scope = self._coordinator_scope(conn, user_id)
-            with conn.transaction():
-                conn.execute("SELECT set_config('app.user_id', %s, true)", (str(user_id),))
-                cursor = conn.execute(
-                    """
-                    UPDATE placements p SET status = %s, rejection_reason = %s
-                    FROM applications a JOIN student_profiles sp ON sp.student_id = a.student_id
-                    WHERE p.application_id = a.application_id AND p.placement_id = %s
-                      AND p.status = 'pending' AND sp.university_id = %s
-                      AND (%s::bigint IS NULL OR sp.department_id = %s)
-                    """,
-                    (action, None if action == "confirmed" else reason.strip(), placement_id,
-                     scope["university_id"], scope["department_id"], scope["department_id"]),
-                )
-                if cursor.rowcount != 1:
-                    raise student_service.StudentError(404, "PLACEMENT_NOT_FOUND", "Placement not found in your university scope.")
+            try:
+                with conn.transaction():
+                    conn.execute("SELECT set_config('app.user_id', %s, true)", (str(user_id),))
+                    cursor = conn.execute(
+                        """
+                        UPDATE placements p SET status = %s, rejection_reason = %s,
+                               start_date = CASE WHEN %s = 'confirmed' THEN coalesce(p.start_date, %s::date, CURRENT_DATE) ELSE p.start_date END,
+                               end_date = CASE WHEN %s = 'confirmed'
+                                               THEN coalesce(p.end_date, coalesce(p.start_date, %s::date, CURRENT_DATE) + l.duration_weeks * 7)
+                                               ELSE p.end_date END
+                        FROM applications a
+                        JOIN student_profiles sp ON sp.student_id = a.student_id
+                        JOIN listings l ON l.listing_id = a.listing_id
+                        WHERE p.application_id = a.application_id AND p.placement_id = %s
+                          AND p.status = 'pending' AND sp.university_id = %s
+                          AND (%s::bigint IS NULL OR sp.department_id = %s)
+                        """,
+                        (action, None if action == "confirmed" else reason.strip(),
+                         action, start_date, action, start_date, placement_id,
+                         scope["university_id"], scope["department_id"], scope["department_id"]),
+                    )
+            except psycopg.errors.IntegrityConstraintViolation as exc:
+                if "RULE_SR13_NO_SLOTS" in str(exc):
+                    raise student_service.StudentError(409, "NO_SLOTS", "All positions for this internship are already filled.") from None
+                raise
+            if cursor.rowcount != 1:
+                raise student_service.StudentError(404, "PLACEMENT_NOT_FOUND", "Placement not found in your university scope.")
             return {"placement_id": placement_id, "status": action}
         self._role_call(decide, {"coordinator"})
 
@@ -1004,7 +1061,7 @@ class handler(BaseHTTPRequestHandler):
             return None
 
     def _public_home(self):
-        self._student_call(lambda conn, _user_id: public_service.home(conn))
+        self._student_call(lambda conn, _user_id: public_service.home(conn, self._optional_student_id(conn)))
 
     def _public_opportunities(self):
         query = parse_qs(urlsplit(self.path).query)
@@ -1058,6 +1115,21 @@ class handler(BaseHTTPRequestHandler):
                     return message_service.reply(conn, user_id, student_id, application_id, payload)
                 return message_service.thread(conn, user_id, student_id, application_id)
         self._student_call(run, success_status=201 if self.command == "POST" else 200, authenticated=True)
+
+    def _student_saved_list(self):
+        def run(conn, user_id):
+            student_id = student_service.student_id_for_user(conn, user_id)
+            return {"saved": saved_service.list_saved(conn, student_id)}
+        self._student_call(run, authenticated=True)
+
+    def _student_saved_change(self, listing_id: int):
+        def run(conn, user_id):
+            student_id = student_service.student_id_for_user(conn, user_id)
+            with conn.transaction():
+                if self.command == "PUT":
+                    return saved_service.save(conn, student_id, listing_id)
+                return saved_service.unsave(conn, student_id, listing_id)
+        self._student_call(run, authenticated=True)
 
     def _student_withdraw_application(self, application_id: int):
         try:

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import {
-  ApiError, publicApi, studentApi,
+  ApiError, publicApi, savedApi, studentApi,
   type AuthUser, type ListingDetail, type ListingSummary, type SearchResult,
 } from './api'
 import { linkTo, navigate } from './router'
@@ -101,13 +101,39 @@ export function SiteLayout({ session, active, grey, children }: { session: SiteS
   )
 }
 
-function ListingTile({ listing }: { listing: ListingSummary }) {
+/** Save/unsave for students. Visitors are sent to sign in first; other roles see nothing. */
+export function SaveButton({ session, listingId, saved, onChange }: { session: SiteSession; listingId: number; saved?: boolean; onChange?: (saved: boolean) => void }) {
+  const [isSaved, setSaved] = useState(Boolean(saved))
+  const [busy, setBusy] = useState(false)
+  useEffect(() => setSaved(Boolean(saved)), [saved])
+  if (session && session.user.role !== 'student') return null
+  async function toggle() {
+    if (!session) {
+      navigate(`/signin?next=${encodeURIComponent(window.location.pathname + window.location.search)}`)
+      return
+    }
+    setBusy(true)
+    try {
+      if (isSaved) await savedApi.unsave(session.token, listingId)
+      else await savedApi.save(session.token, listingId)
+      setSaved(!isSaved)
+      onChange?.(!isSaved)
+    } catch {
+      // Leave the button as it was; the next page load shows the true state.
+    } finally {
+      setBusy(false)
+    }
+  }
+  return <button type="button" className={`btn btn-sm ${isSaved ? 'is-saved' : ''}`} aria-pressed={isSaved} disabled={busy} onClick={() => void toggle()}>{isSaved ? 'Saved' : 'Save'}</button>
+}
+
+function ListingTile({ listing, session }: { listing: ListingSummary; session: SiteSession }) {
   return (
     <article className="listing-tile">
       <div className="company-line"><span className="logo-box">{initialsOf(listing.company_name)}</span><span>{listing.company_name} · {listing.sector}</span></div>
       <a className="listing-title" {...linkTo(`/internships/${listing.listing_id}`)}>{listing.title}</a>
       <div className="listing-meta">{workplace(listing)} · {listing.duration_weeks} weeks · {plural(listing.slots_remaining, 'position')}</div>
-      <div className="listing-foot"><span>Closes {shortDate(listing.application_deadline)}</span><a className="btn btn-sm" {...linkTo(`/internships/${listing.listing_id}`)}>View</a></div>
+      <div className="listing-foot"><span>Closes {shortDate(listing.application_deadline)}</span><SaveButton session={session} listingId={listing.listing_id} saved={listing.saved} /></div>
     </article>
   )
 }
@@ -119,8 +145,8 @@ export function HomePage({ session }: { session: SiteSession }) {
   const [location, setLocation] = useState('')
 
   useEffect(() => {
-    publicApi.home().then(setData).catch((reason: unknown) => setError(messageOf(reason)))
-  }, [])
+    publicApi.home(session?.user.role === 'student' ? session.token : undefined).then(setData).catch((reason: unknown) => setError(messageOf(reason)))
+  }, [session?.token])
 
   useEffect(() => {
     const hash = window.location.hash.slice(1)
@@ -176,7 +202,7 @@ export function HomePage({ session }: { session: SiteSession }) {
           {error && <div className="notice is-error">{error}</div>}
           {!data && !error && <div className="empty">Loading internships…</div>}
           {data && data.latest.length === 0 && <div className="empty">No internships are open right now. Check back soon.</div>}
-          {data && data.latest.length > 0 && <div className="listing-grid">{data.latest.map((item) => <ListingTile key={item.listing_id} listing={item} />)}</div>}
+          {data && data.latest.length > 0 && <div className="listing-grid">{data.latest.map((item) => <ListingTile key={item.listing_id} listing={item} session={session} />)}</div>}
         </div>
       </section>
 
@@ -339,7 +365,7 @@ export function InternshipsPage({ session, search }: { session: SiteSession; sea
                 </div>
                 <div className="result-side">
                   <span>Closes {shortDate(item.application_deadline)}</span>
-                  {item.application_status ? <span className="status-pill is-blue">Applied</span> : <a className="btn btn-sm" {...linkTo(`/internships/${item.listing_id}`)}>View</a>}
+                  {item.application_status ? <span className="status-pill is-blue">Applied</span> : <SaveButton session={session} listingId={item.listing_id} saved={item.saved} />}
                 </div>
               </article>
             ))}
@@ -463,8 +489,9 @@ export function InternshipDetailPage({ session, id, onApplied }: { session: Site
                 : <a className="btn btn-primary btn-block" href="#apply" onClick={(event) => { event.preventDefault(); document.getElementById('apply')?.scrollIntoView({ behavior: 'smooth' }) }}>Apply now</a>)
                 : session ? <div className="notice is-info">Only student accounts can apply.</div>
                   : <a className="btn btn-primary btn-block" {...linkTo(`/signin?next=${encodeURIComponent(`/internships/${listing.listing_id}`)}`)}>Sign in to apply</a>}
-              <div className="side-actions" style={{ gridTemplateColumns: '1fr' }}>
-                <button className="btn" onClick={() => { void navigator.clipboard?.writeText(window.location.href) }}>Share link</button>
+              <div className="side-actions" style={session && !isStudent ? { gridTemplateColumns: '1fr' } : undefined}>
+                <SaveButton session={session} listingId={listing.listing_id} saved={listing.saved} />
+                <button className="btn btn-sm" onClick={() => { void navigator.clipboard?.writeText(window.location.href) }}>Share link</button>
               </div>
               {isStudent && verified === false && <div className="notice">Your university hasn't verified you yet. You can apply once they do.</div>}
             </section>

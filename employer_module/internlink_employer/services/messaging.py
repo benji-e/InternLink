@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..constants import MAX_MESSAGE_LEN
+from ..constants import MAX_MESSAGE_LEN, MESSAGING_STATUSES
 from ..errors import ModuleError, RULE_MAP
 from ..session import Session
 from .common import (
@@ -27,7 +27,7 @@ def send_message(db, session: Session, application_id: int, body) -> dict:
             f"Message must be 1 to {MAX_MESSAGE_LEN} characters.",
             {"body": "Required" if not body else "Too long"},
         )
-    if application["status"] not in ("shortlisted", "accepted"):
+    if application["status"] not in MESSAGING_STATUSES:
         raise ModuleError(*RULE_MAP["RULE_SR10_NOT_SHORTLISTED"])
 
     recipient = student_user_id(db, application["student_id"])
@@ -42,7 +42,7 @@ def send_message(db, session: Session, application_id: int, body) -> dict:
             "SELECT status FROM applications WHERE application_id = %s",
             [application_id],
         )
-        if current is None or current["status"] not in ("shortlisted", "accepted"):
+        if current is None or current["status"] not in MESSAGING_STATUSES:
             raise ModuleError(*RULE_MAP["RULE_SR10_NOT_SHORTLISTED"])
         message_id = db.insert_returning_id(
             "messages",

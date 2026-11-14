@@ -209,10 +209,10 @@ export const roleApi = {
     }, token),
   verifyStudent: (token: string, id: number) =>
     apiRequest<{ student_id: number; verified: boolean }>(`/api/v1/coordinator/students/${id}`, { method: 'POST' }, token),
-  decidePlacement: (token: string, id: number, action: string, reason?: string) =>
+  decidePlacement: (token: string, id: number, action: string, reason?: string, startDate?: string) =>
     apiRequest<{ placement_id: number; status: string }>(`/api/v1/coordinator/placements/${id}`, {
       method: 'POST',
-      body: JSON.stringify({ action, reason }),
+      body: JSON.stringify({ action, reason, start_date: startDate }),
     }, token),
 }
 
@@ -229,6 +229,7 @@ export type ListingSummary = {
   posted_at: string
   required_skills: string[]
   application_status?: string | null
+  saved?: boolean
 }
 
 export type MatchDetail = {
@@ -253,6 +254,7 @@ export type ListingDetail = ListingSummary & {
   similar: { listing_id: number; title: string; company_name: string }[]
   match: MatchDetail | null
   application: { application_id: number; status: string; submitted_at: string } | null
+  saved: boolean
 }
 
 export type SearchResult = {
@@ -275,8 +277,8 @@ export type MessageThread = {
 
 /** Pages that work without signing in. A student token adds match details. */
 export const publicApi = {
-  home: () =>
-    apiRequest<{ latest: ListingSummary[]; universities: string[]; locations: string[] }>('/api/v1/public/home'),
+  home: (token?: string) =>
+    apiRequest<{ latest: ListingSummary[]; universities: string[]; locations: string[] }>('/api/v1/public/home', {}, token),
   search: (query: URLSearchParams, token?: string) =>
     apiRequest<SearchResult>(`/api/v1/public/opportunities?${query.toString()}`, {}, token),
   detail: (id: number, token?: string) =>
@@ -296,4 +298,41 @@ export const messageApi = {
       { method: 'POST', body: JSON.stringify({ body }) },
       token,
     ),
+}
+
+export type SavedItem = {
+  listing_id: number; title: string; company_name: string; sector: string; location: string; is_remote: boolean
+  duration_weeks: number; application_deadline: string; saved_at: string; is_open: boolean; application_status: string | null
+}
+
+export const savedApi = {
+  list: (token: string) => apiRequest<{ saved: SavedItem[] }>('/api/v1/students/me/saved', {}, token),
+  save: (token: string, listingId: number) =>
+    apiRequest<{ saved: boolean }>(`/api/v1/students/me/saved/${listingId}`, { method: 'PUT' }, token),
+  unsave: (token: string, listingId: number) =>
+    apiRequest<{ saved: boolean }>(`/api/v1/students/me/saved/${listingId}`, { method: 'DELETE' }, token),
+}
+
+export type Person = { full_name: string; email: string; phone: string | null; status: string; email_confirmed: boolean }
+export type RegistrationDetail = {
+  org_type: 'company' | 'university'; org_id: number; name: string; status: string; created_at: string
+  location: string; people: Person[]
+  sector?: string; description?: string | null; contact_email?: string; website?: string | null
+  draft_listings?: number; email_matches_website?: boolean | null
+  email_domain?: string; student_requests?: number
+}
+export type UniversityRequest = {
+  university_name: string; requests: number; first_requested_at: string; last_requested_at: string; coordinator_emails: string[]
+}
+
+export const adminApi = {
+  registrationDetail: (token: string, type: string, id: number) =>
+    apiRequest<{ registration: RegistrationDetail }>(`/api/v1/admin/registrations/${type}/${id}`, {}, token),
+  universityRequests: (token: string) =>
+    apiRequest<{ requests: UniversityRequest[] }>('/api/v1/admin/university-requests', {}, token),
+  closeUniversityRequest: (token: string, universityName: string, status: 'added' | 'declined') =>
+    apiRequest<{ updated: number }>('/api/v1/admin/university-requests', {
+      method: 'POST',
+      body: JSON.stringify({ university_name: universityName, status }),
+    }, token),
 }

@@ -1,5 +1,5 @@
 export type Role = 'student' | 'employer' | 'university' | 'admin'
-export type Page = 'dashboard' | 'browse' | 'applications' | 'notifications' | 'profile' | 'applicants' | 'students' | 'approvals' | 'users' | 'listings' | 'messages' | 'reports' | 'catalog'
+export type Page = 'dashboard' | 'browse' | 'applications' | 'notifications' | 'profile' | 'applicants' | 'students' | 'approvals' | 'users' | 'listings' | 'messages' | 'reports' | 'catalog' | 'placed' | 'applicant' | 'verify'
 
 export type Opportunity = {
   id: number
@@ -28,6 +28,9 @@ export type Application = {
   match: number
   unread: number
   placementStatus: string | null
+  interviewAt: string | null
+  interviewNote: string | null
+  decisionNote: string | null
 }
 
 export type StudentProfile = {

@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import {
-  ArrowRight, Bell, BriefcaseBusiness,
-  Check, CheckCircle2, ChevronDown, CircleHelp, Clock3, FileText,
-  GraduationCap, LayoutDashboard, LogOut, Menu, Search,
-  Library, Plus, ShieldCheck, Users, X,
+  ArrowRight, Bell, Check, CheckCircle2, Clock3, FileText, GraduationCap, Plus, Search, ShieldCheck, Users,
 } from 'lucide-react'
-import { ApiError, employerRequest, roleApi, studentApi, type AuthUser, type CatalogItem, type CoordinatorCatalog } from './api'
+import { ApiError, employerRequest, roleApi, savedApi, studentApi, type SavedItem, type AuthUser, type CatalogItem, type CoordinatorCatalog } from './api'
 import { AuthGate, isAuthLinkPath } from './AuthPages'
 import { HomePage, InternshipDetailPage, InternshipsPage } from './PublicSite'
-import { StudentApplications, StudentHome, StudentShell, type StudentPage } from './StudentPages'
+import { SavedPage, StudentApplications, StudentHome, StudentShell, type StudentPage } from './StudentPages'
+import {
+  AdminRequests, CoordinatorApprovals, CoordinatorOverview, CoordinatorStudents, CoordinatorVerify,
+  EmployerApplicant, EmployerBoard, OrgShell, PlacedInterns, type OrgNavItem,
+} from './OrgPages'
 import { navigate, useLocation } from './router'
-import { BrandMark } from './BrandMark'
 import type { Application, Opportunity, Page, Role, StudentProfile } from './types'
 import './App.css'
 
@@ -19,27 +19,6 @@ type LiveSession = { token: string; user: LiveUser }
 type NotificationItem = { id: number; title: string; message: string; time: string; read: boolean }
 
 const SESSION_KEY = 'internlink-student-session'
-
-const employerNav: { page: Page; label: string; icon: typeof LayoutDashboard }[] = [
-  { page: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { page: 'listings', label: 'My listings', icon: BriefcaseBusiness },
-  { page: 'applicants', label: 'Applicants', icon: Users },
-  { page: 'messages', label: 'Messages', icon: Bell },
-]
-
-const universityNav: { page: Page; label: string; icon: typeof LayoutDashboard }[] = [
-  { page: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { page: 'approvals', label: 'Pending approvals', icon: CheckCircle2 },
-  { page: 'students', label: 'Students', icon: Users },
-  { page: 'catalog', label: 'Departments & programmes', icon: Library },
-  { page: 'reports', label: 'Reports', icon: FileText },
-]
-
-const adminNav: { page: Page; label: string; icon: typeof LayoutDashboard }[] = [
-  { page: 'approvals', label: 'Registrations', icon: ShieldCheck },
-  { page: 'users', label: 'Users & roles', icon: Users },
-  { page: 'reports', label: 'Activity log', icon: FileText },
-]
 
 const emptyProfile: StudentProfile = {
   fullName: 'Student',
@@ -101,6 +80,9 @@ function mapApplication(row: Record<string, unknown>, index: number): Applicatio
     match: Number(row.match_score ?? row.match ?? 0),
     unread: Number(row.unread_messages ?? 0),
     placementStatus: typeof row.placement_status === 'string' ? row.placement_status : null,
+    interviewAt: typeof row.interview_at === 'string' ? row.interview_at : null,
+    interviewNote: typeof row.interview_note === 'string' ? row.interview_note : null,
+    decisionNote: typeof row.decision_note === 'string' ? row.decision_note : null,
   }
 }
 
@@ -128,6 +110,7 @@ function App() {
   const restoredSession = useMemo(() => (isAuthLinkPath() ? null : readSession()), [])
   const { path, search: urlSearch } = useLocation()
   const [recommendationsError, setRecommendationsError] = useState('')
+  const [savedItems, setSavedItems] = useState<SavedItem[]>([])
   const [role, setRole] = useState<Role | null>(restoredSession?.user.role ?? null)
   const [page, setPage] = useState<Page>('dashboard')
   const [session, setSession] = useState<LiveSession | null>(restoredSession)
@@ -137,12 +120,10 @@ function App() {
   const [liveNotifications, setLiveNotifications] = useState<NotificationItem[]>([])
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState('')
-  const [mobileMenu, setMobileMenu] = useState(false)
-  const [accountMenu, setAccountMenu] = useState(false)
   const [selectedListingId, setSelectedListingId] = useState<number | null>(null)
+  const [selectedApplicant, setSelectedApplicant] = useState<{ id: number; order: number[] } | null>(null)
   const [employerDashboard, setEmployerDashboard] = useState<Record<string, unknown> | null>(null)
   const [employerListings, setEmployerListings] = useState<Record<string, unknown>[]>([])
-  const [employerApplicants, setEmployerApplicants] = useState<Record<string, unknown>[]>([])
   const [employerConversations, setEmployerConversations] = useState<Record<string, unknown>[]>([])
   const [selectedMessageConversation, setSelectedMessageConversation] = useState<Record<string, unknown> | null>(null)
   const [adminRegistrations, setAdminRegistrations] = useState<Record<string, unknown>[]>([])
@@ -163,7 +144,7 @@ function App() {
     if (!session) return
     if (session.user.role === 'student') void loadLiveStudent(session)
     else void loadLiveRole(session)
-  }, [session, selectedListingId])
+  }, [session])
 
   async function loadLiveRole(active: LiveSession) {
     setRoleLoading(true)
@@ -177,14 +158,9 @@ function App() {
         setEmployerDashboard(dashboard)
         setEmployerListings(listings)
         setEmployerConversations(conversations)
-        if (listings.length) {
-          const listingId = selectedListingId ?? Number(listings[0].listing_id)
-          if (selectedListingId === null) setSelectedListingId(listingId)
-          const result = await employerRequest<{ applicants: Record<string, unknown>[] }>('applicants', active.token, { listing_id: listingId })
-          setEmployerApplicants(result.applicants)
-        } else {
-          setEmployerApplicants([])
-        }
+        // Open the board on a live internship when there is one.
+        const first = listings.find((item) => item.status === 'open') ?? listings[0]
+        if (first && selectedListingId === null) setSelectedListingId(Number(first.listing_id))
       } else if (active.user.role === 'admin') {
         const [registrations, users] = await Promise.all([
           roleApi.adminRegistrations(active.token),
@@ -227,6 +203,7 @@ function App() {
       setProfile(mapProfile(profileResult.profile))
       setLiveRecommendations(recommendationResult.results.map(mapOpportunity))
       setRecommendationsError('error' in recommendationResult ? String(recommendationResult.error) : '')
+      void loadSaved(active)
       setLiveApplications(applicationResult.applications.map(mapApplication))
       setLiveNotifications(notificationResult.notifications.map((item, index) => ({
         id: Number(item.notification_id ?? index),
@@ -243,6 +220,14 @@ function App() {
       }
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadSaved(active: LiveSession) {
+    try {
+      setSavedItems((await savedApi.list(active.token)).saved)
+    } catch {
+      setSavedItems([])
     }
   }
 
@@ -339,74 +324,47 @@ function App() {
     const unreadMessages = liveApplications.reduce((total, item) => total + item.unread, 0)
     return (
       <StudentShell page={studentPage} name={session.user.full_name} unreadAlerts={liveNotifications.filter((item) => !item.read).length}
-        unreadMessages={unreadMessages} onPage={goStudent} onSignOut={signOut}>
+        unreadMessages={unreadMessages} savedCount={savedItems.length} onPage={goStudent} onSignOut={signOut}>
         {studentPage === 'applications' ? <StudentApplications token={session.token} applications={liveApplications} onWithdraw={(item) => void withdrawApplication(item)} onRead={() => void loadLiveStudent(session)} />
           : studentPage === 'notifications' ? <div className="legacy-panel"><NotificationsPage notifications={liveNotifications} onRead={(id) => void markNotificationRead(id)} /></div>
+            : studentPage === 'saved' ? <SavedPage session={siteSession} saved={savedItems} onChange={() => void loadSaved(session)} />
             : studentPage === 'profile' ? <div className="legacy-panel"><ProfilePage profile={profile} token={session.token} loading={loading} onSave={saveProfile} /></div>
-              : <StudentHome profile={profile} applications={liveApplications} recommendations={liveRecommendations} recommendationsError={recommendationsError} loading={loading} onPage={goStudent} />}
+              : <StudentHome session={siteSession} profile={profile} applications={liveApplications} recommendations={liveRecommendations} recommendationsError={recommendationsError} saved={savedItems} loading={loading} onPage={goStudent} onSavedChange={() => void loadSaved(session)} />}
         {toast && <div className="toast-s" role="status">{toast}</div>}
       </StudentShell>
     )
   }
 
-  const nav = role === 'employer' ? employerNav : role === 'university' ? universityNav : adminNav
-  const userName = session?.user.full_name ?? profile.fullName
   function changePage(next: Page) {
     setPage(next)
-    setMobileMenu(false)
   }
 
-  return (
-    <div className="app-shell">
-      <header className="topbar">
-        <button className="menu-toggle icon-button" aria-label="Open menu" onClick={() => setMobileMenu((open) => !open)}>
-          <Menu size={20} />
-        </button>
-        <BrandMark />
-        <div className="topbar-spacer" />
-        <span className="live-badge"><span /> Connected</span>
-        <button className="top-icon icon-button" aria-label="Help"><CircleHelp size={19} /></button>
-        <button className="account-chip" onClick={() => setAccountMenu((open) => !open)} aria-expanded={accountMenu} aria-haspopup="menu" title="Account menu">
-          <span className="avatar">{initials(userName)}</span>
-          <span className="account-name">{userName.split(' ')[0]}</span>
-          <ChevronDown size={15} />
-        </button>
-        {accountMenu && <div className="account-menu" role="menu">
-          <strong>{userName}</strong><small>{session?.user.email}</small>
-          <button role="menuitem" onClick={() => { setAccountMenu(false); signOut() }}>Log in with another account</button>
-          <button role="menuitem" onClick={() => { setAccountMenu(false); signOut() }}><LogOut size={15} /> Log out</button>
-        </div>}
-      </header>
+  const pageToast = toast && <div className="toast-s" role="status">{toast}</div>
 
-      <div className="workspace">
-        <aside className={`sidebar ${mobileMenu ? 'sidebar-open' : ''}`}>
-          <div className="workspace-label">{role === 'employer' ? 'EMPLOYER SPACE' : role === 'university' ? 'UNIVERSITY SPACE' : 'ADMIN SPACE'}</div>
-          <nav className="side-nav">
-            {nav.map(({ page: navPage, label, icon: Icon }) => (
-              <button key={navPage} className={`nav-item ${page === navPage ? 'active' : ''}`} onClick={() => changePage(navPage)}>
-                <Icon size={18} strokeWidth={1.9} /><span>{label}</span>
-              </button>
-            ))}
-          </nav>
-          <div className="sidebar-bottom">
-            <div className="help-card">
-              <div className="help-icon"><CircleHelp size={17} /></div>
-              <strong>Need a hand?</strong>
-              <p>We're here to help you make your next move.</p>
-              <button onClick={() => setToast('Support: hello@internlink.ug')}>Get support <ArrowRight size={14} /></button>
-            </div>
-            <button className="signout-link" onClick={signOut}><LogOut size={17} /> Sign out / switch role</button>
-            <div className="sidebar-foot">© 2026 InternLink Uganda</div>
-          </div>
-        </aside>
-
-        <main className="main-content">
-          <div className="mobile-page-title">{nav.find((item) => item.page === page)?.label}</div>
-          {role === 'employer' && page === 'messages' && session && (
+  if (role === 'employer') {
+    const unread = employerConversations.reduce((total, item) => total + Number(item.unread ?? 0), 0)
+    const navPage = page === 'applicant' ? 'applicants' : page
+    return (
+      <OrgShell suffix="for employers" page={navPage} onPage={changePage} name={session.user.full_name} onSignOut={signOut}
+        nav={[
+          { page: 'dashboard', label: 'Overview' },
+          { page: 'listings', label: 'Internship listings' },
+          { page: 'applicants', label: 'Applicants' },
+          { page: 'messages', label: 'Messages', count: unread },
+          { page: 'placed', label: 'Placed interns' },
+        ] as OrgNavItem<Page>[]}
+        action={<button className="btn btn-primary btn-sm" onClick={() => changePage('listings')}>Post an internship</button>}>
+        {page === 'applicants' && <EmployerBoard token={session.token} listings={employerListings} listingId={selectedListingId} onListing={setSelectedListingId}
+          onOpen={(id, order) => { setSelectedApplicant({ id, order }); setPage('applicant') }} toast={setToast} />}
+        {page === 'applicant' && selectedApplicant && <EmployerApplicant token={session.token} applicationId={selectedApplicant.id} order={selectedApplicant.order}
+          onOpen={(id) => setSelectedApplicant((current) => current && { ...current, id })} onBack={() => { setPage('applicants'); void loadLiveRole(session) }}
+          onMessage={(row) => { setSelectedMessageConversation(row); setPage('messages') }} toast={setToast} />}
+        {page === 'placed' && <PlacedInterns token={session.token} />}
+        {page === 'messages' && <div className="legacy-panel">
             <EmployerMessages token={session.token} conversations={employerConversations} initialConversation={selectedMessageConversation} toast={setToast} onRefresh={() => loadLiveRole(session)} />
-          )}
-          {role === 'employer' && page !== 'messages' && (
-            <LiveRoleWorkspace role="employer" page={page} loading={roleLoading} data={employerDashboard} records={page === 'applicants' ? employerApplicants : employerListings} onPage={changePage} onRefresh={() => session && void loadLiveRole(session)} onSelectListing={(id) => { setSelectedListingId(id); setPage('applicants') }} onMessage={(row) => { setSelectedMessageConversation(row); setPage('messages') }} onLoadListing={async (id) => {
+        </div>}
+        {(page === 'dashboard' || page === 'listings') && <div className="legacy-panel">
+            <LiveRoleWorkspace role="employer" page={page} loading={roleLoading} data={employerDashboard} records={employerListings} onPage={changePage} onRefresh={() => session && void loadLiveRole(session)} onSelectListing={(id) => { setSelectedListingId(id); setPage('applicants') }} onMessage={(row) => { setSelectedMessageConversation(row); setPage('messages') }} onLoadListing={async (id) => {
               if (!session) throw new Error('Sign in to manage listings.')
               return employerRequest<Record<string, unknown>>('listing_detail', session.token, { listing_id: id })
             }} onSaveListing={async (id, form) => {
@@ -431,21 +389,47 @@ function App() {
                 await loadLiveRole(session)
               } catch (error) { setToast(messageFrom(error)) }
             }} />
-          )}
-          {role === 'university' && page === 'catalog' && session && (
-            <CoordinatorCatalogPage token={session.token} onPage={changePage} toast={setToast} />
-          )}
-          {role === 'university' && page !== 'catalog' && (
-            <LiveRoleWorkspace role="university" page={page} loading={roleLoading} data={coordinatorStats} records={page === 'approvals' ? coordinatorPlacements : coordinatorStudents} onPage={changePage} onRefresh={() => session && void loadLiveRole(session)} onAction={async (id, action) => {
-              if (!session) return
-              try {
-                if (page === 'students') await roleApi.verifyStudent(session.token, id)
-                else await roleApi.decidePlacement(session.token, id, action === 'Approve' ? 'confirmed' : 'rejected', action === 'Reject' ? 'Rejected by university coordinator' : undefined)
-                await loadLiveRole(session)
-              } catch (error) { setToast(messageFrom(error)) }
-            }} />
-          )}
-          {role === 'admin' && (
+        </div>}
+        {pageToast}
+      </OrgShell>
+    )
+  }
+
+  if (role === 'university') {
+    const coordinator = { stats: coordinatorStats, students: coordinatorStudents, placements: coordinatorPlacements }
+    const reload = () => void loadLiveRole(session)
+    const waiting = coordinatorStudents.filter((row) => !row.verified).length
+    return (
+      <OrgShell suffix="universities" page={page} onPage={changePage} name={session.user.full_name} onSignOut={signOut}
+        nav={[
+          { page: 'dashboard', label: 'Overview' },
+          { page: 'verify', label: 'Verify students', count: waiting },
+          { page: 'approvals', label: 'Placement approvals', count: coordinatorPlacements.length },
+          { page: 'students', label: 'All students' },
+          { page: 'reports', label: 'Reports' },
+          { page: 'catalog', label: 'Departments & programmes' },
+        ] as OrgNavItem<Page>[]}>
+        {roleLoading && !coordinatorStats ? <div className="card empty">Loading…</div>
+          : page === 'verify' ? <CoordinatorVerify token={session.token} data={coordinator} onReload={reload} toast={setToast} />
+            : page === 'approvals' ? <CoordinatorApprovals token={session.token} data={coordinator} onReload={reload} toast={setToast} />
+              : page === 'students' ? <CoordinatorStudents data={coordinator} />
+                : page === 'reports' ? <CoordinatorStudents data={coordinator} reports />
+                  : page === 'catalog' ? <div className="legacy-panel"><CoordinatorCatalogPage token={session.token} onPage={changePage} toast={setToast} /></div>
+                    : <CoordinatorOverview token={session.token} data={coordinator} onReload={reload} toast={setToast} onPage={changePage} />}
+        {pageToast}
+      </OrgShell>
+    )
+  }
+
+  return (
+    <OrgShell suffix="admin" page={page} onPage={changePage} name={session.user.full_name} onSignOut={signOut}
+      nav={[
+        { page: 'approvals', label: 'Organisation requests', count: adminRegistrations.length },
+        { page: 'users', label: 'Users' },
+        { page: 'reports', label: 'Activity log' },
+      ] as OrgNavItem<Page>[]}>
+      {page === 'approvals' ? <AdminRequests token={session.token} registrations={adminRegistrations} onReload={() => void loadLiveRole(session)} toast={setToast} />
+        : <div className="legacy-panel">
             <LiveRoleWorkspace role="admin" page={page} loading={roleLoading} data={null} records={page === 'users' ? adminUsers : page === 'reports' ? adminAudit : adminRegistrations} onPage={changePage} onRefresh={() => session && void loadLiveRole(session)} onAction={async (id, action, type) => {
               if (!session) return
               try {
@@ -454,13 +438,11 @@ function App() {
                 await loadLiveRole(session)
               } catch (error) { setToast(messageFrom(error)) }
             }} />
-          )}
-        </main>
-      </div>
-
-      {toast && <div className="toast"><CheckCircle2 size={17} />{toast}<button onClick={() => setToast('')} aria-label="Dismiss"><X size={15} /></button></div>}
-    </div>
+        </div>}
+      {pageToast}
+    </OrgShell>
   )
+
 }
 
 function LiveRoleWorkspace({

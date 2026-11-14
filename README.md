@@ -63,6 +63,7 @@ Run the schema scripts against the new database, in this order:
 3. `03_views_functions.sql`
 4. `04_roles.sql` if using the database roles defined by the project.
 5. `08_university_requests.sql` (students asking for a university that isn't listed yet)
+6. `09_interviews_saved.sql` (interview stage, decline reasons, saved internships)
 
 Do **not** run `05_seed.sql` on a production database. It contains fixed demo
 accounts and sample records. `06_tests.sql` and `07_load_test.sql` are
@@ -183,6 +184,7 @@ coordinator and administrator accounts.
 - `GET /api/v1/students/me/recommendations`
 - `GET`, `POST /api/v1/students/me/applications`
 - `POST /api/v1/students/me/applications/{id}/withdraw`
+- `GET /api/v1/students/me/saved`, `PUT` and `DELETE /api/v1/students/me/saved/{listing_id}`
 - `GET`, `POST /api/v1/students/me/applications/{id}/messages`: read the employer's
   messages and reply (only after the employer has written, while shortlisted or accepted)
 - `GET /api/v1/students/me/notifications`
@@ -192,14 +194,19 @@ coordinator and administrator accounts.
 
 - `GET /api/v1/admin/registrations`, `/api/v1/admin/users`,
   `/api/v1/admin/audit`
+- `GET /api/v1/admin/registrations/{company|university}/{id}`: details for review
 - `POST /api/v1/admin/registrations/{company|university}/{id}`
+- `GET /api/v1/admin/university-requests`; `POST` with `university_name` and
+  `status` (`added` or `declined`) closes the open requests for that university
 - `PATCH /api/v1/admin/users/{id}`
 
 ### University coordinator endpoints
 
 - `GET /api/v1/coordinator/dashboard`, `/students`, `/placements`
 - `POST /api/v1/coordinator/students/{id}`
-- `POST /api/v1/coordinator/placements/{id}`
+- `POST /api/v1/coordinator/placements/{id}` with `action` (`confirmed` or `rejected`),
+  `reason` (required to reject) and optional `start_date`; the end date follows from
+  the internship's length
 
 ### Employer endpoints
 
@@ -207,7 +214,8 @@ Employer registration and verification use `POST /api/employer/register` and
 `POST /api/employer/verify-email`. Authenticated employer operations are
 available as `POST /api/employer/{action}`; actions include `dashboard`,
 `get_company`, `update_company`, `create_listing`, `update_listing`,
-`set_listing_status`, `my_listings`, `applicants`, `view_applicant`, `decide`,
+`set_listing_status`, `my_listings`, `applicants`, `view_applicant`, `decide`
+(`shortlist`, `interview` with `interview_at`, `accept`, `reject` with optional `reason`),
 `send_message`, `get_thread`, `inbox`, `my_placements`,
 `complete_placement`, `notifications` and `mark_notification_read`.
 
