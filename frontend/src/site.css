@@ -139,7 +139,7 @@
 /* Internships search */
 .page-pad { padding-top: 28px; padding-bottom: 48px; }
 .page-title { font-size: 34px; font-weight: 800; margin-bottom: 16px; }
-.search-row { display: grid; grid-template-columns: 2fr 1fr auto; gap: 10px; margin-bottom: 20px; }
+.search-row { display: grid; grid-template-columns: 2fr 1fr auto auto; gap: 10px; margin-bottom: 20px; }
 .browse-grid { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; }
 .filters { background: #fff; border: 1.5px solid var(--s-line); border-radius: 12px; padding: 16px; position: sticky; top: 80px; }
 .filters-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
@@ -292,6 +292,11 @@
 .s-table input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--s-blue); }
 .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px; border-bottom: 1px solid var(--s-line-soft); flex-wrap: wrap; }
 .approval { border: 1.5px solid var(--s-line-soft); border-radius: 10px; padding: 12px; }
+.cv-file { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; padding: 10px 12px; border: 1.5px solid var(--s-line-soft); border-radius: 10px; font-weight: 400; }
+.cv-file .logo-box { font-size: 12px; }
+.dropzone { display: block; margin-top: 12px; padding: 18px; border: 2px dashed var(--s-line); border-radius: 10px; text-align: center; color: var(--s-text); font-size: 14px; cursor: pointer; }
+.dropzone:hover, .dropzone.is-over { border-color: var(--s-blue); background: var(--s-blue-soft); }
+.dropzone:focus-within { outline: 3px solid rgba(31, 95, 209, .2); }
 .applicant-head { display: flex; gap: 16px; align-items: center; }
 .dialog-backdrop { position: fixed; inset: 0; background: rgba(20, 20, 18, .45); display: grid; place-items: center; z-index: 60; padding: 16px; }
 .dialog { width: min(460px, 100%); }

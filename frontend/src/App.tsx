@@ -3,12 +3,12 @@ import {
   ArrowRight, Bell, Check, CheckCircle2, Clock3, FileText, GraduationCap, Plus, Search, ShieldCheck, Users,
 } from 'lucide-react'
 import { ApiError, employerRequest, roleApi, savedApi, studentApi, type SavedItem, type AuthUser, type CatalogItem, type CoordinatorCatalog } from './api'
-import { AuthGate, isAuthLinkPath } from './AuthPages'
+import { AcceptInvitePage, AuthGate, isAuthLinkPath } from './AuthPages'
 import { HomePage, InternshipDetailPage, InternshipsPage } from './PublicSite'
-import { SavedPage, StudentApplications, StudentHome, StudentShell, type StudentPage } from './StudentPages'
+import { CvCard, SavedPage, StudentApplications, StudentHome, StudentShell, type StudentPage } from './StudentPages'
 import {
   AdminRequests, CoordinatorApprovals, CoordinatorOverview, CoordinatorStudents, CoordinatorVerify,
-  EmployerApplicant, EmployerBoard, OrgShell, PlacedInterns, type OrgNavItem,
+  AdminUniversities, CoordinatorTeamPage, EmployerApplicant, EmployerBoard, OrgShell, PlacedInterns, type OrgNavItem,
 } from './OrgPages'
 import { navigate, useLocation } from './router'
 import type { Application, Opportunity, Page, Role, StudentProfile } from './types'
@@ -33,6 +33,7 @@ const emptyProfile: StudentProfile = {
   skills: [],
   interests: [],
   completeness: 0,
+  hasCv: false,
 }
 
 function messageFrom(error: unknown) {
@@ -102,6 +103,7 @@ function mapProfile(row: Record<string, unknown>): StudentProfile {
     skills,
     interests,
     completeness: Number(row.completeness_pct ?? 40),
+    hasCv: Boolean(row.has_cv),
   }
 }
 
@@ -300,7 +302,7 @@ function App() {
 
   // Redirects happen after render: signed-out visitors go to sign-in, signed-in users skip it.
   const signedIn = Boolean(session && role)
-  const isPublicPath = path === '/' || path === '/internships' || /^\/internships\/\d+$/.test(path)
+  const isPublicPath = path === '/' || path === '/internships' || path === '/accept-invite' || /^\/internships\/\d+$/.test(path)
   const isAuthPath = path === '/signin' || path === '/signup' || isAuthLinkPath(path)
   const redirect = !signedIn && !isPublicPath && !isAuthPath ? `/signin?next=${encodeURIComponent(path + urlSearch)}`
     : signedIn && (path === '/signin' || path === '/signup') ? '/dashboard' : null
@@ -312,6 +314,7 @@ function App() {
   // Public pages work signed in or out.
   const siteSession = session && role ? session : null
   if (path === '/') return <HomePage session={siteSession} />
+  if (path === '/accept-invite') return <AcceptInvitePage search={urlSearch} />
   if (path === '/internships') return <InternshipsPage session={siteSession} search={urlSearch} />
   const detailMatch = /^\/internships\/(\d+)$/.exec(path)
   if (detailMatch) return <InternshipDetailPage session={siteSession} id={Number(detailMatch[1])} onApplied={() => session && void loadLiveStudent(session)} />
@@ -328,7 +331,7 @@ function App() {
         {studentPage === 'applications' ? <StudentApplications token={session.token} applications={liveApplications} onWithdraw={(item) => void withdrawApplication(item)} onRead={() => void loadLiveStudent(session)} />
           : studentPage === 'notifications' ? <div className="legacy-panel"><NotificationsPage notifications={liveNotifications} onRead={(id) => void markNotificationRead(id)} /></div>
             : studentPage === 'saved' ? <SavedPage session={siteSession} saved={savedItems} onChange={() => void loadSaved(session)} />
-            : studentPage === 'profile' ? <div className="legacy-panel"><ProfilePage profile={profile} token={session.token} loading={loading} onSave={saveProfile} /></div>
+            : studentPage === 'profile' ? <><CvCard token={session.token} onChange={() => void loadLiveStudent(session)} /><div className="legacy-panel"><ProfilePage profile={profile} token={session.token} loading={loading} onSave={saveProfile} /></div></>
               : <StudentHome session={siteSession} profile={profile} applications={liveApplications} recommendations={liveRecommendations} recommendationsError={recommendationsError} saved={savedItems} loading={loading} onPage={goStudent} onSavedChange={() => void loadSaved(session)} />}
         {toast && <div className="toast-s" role="status">{toast}</div>}
       </StudentShell>
@@ -408,6 +411,7 @@ function App() {
           { page: 'students', label: 'All students' },
           { page: 'reports', label: 'Reports' },
           { page: 'catalog', label: 'Departments & programmes' },
+          { page: 'team', label: 'Coordinators' },
         ] as OrgNavItem<Page>[]}>
         {roleLoading && !coordinatorStats ? <div className="card empty">Loading…</div>
           : page === 'verify' ? <CoordinatorVerify token={session.token} data={coordinator} onReload={reload} toast={setToast} />
@@ -415,6 +419,7 @@ function App() {
               : page === 'students' ? <CoordinatorStudents data={coordinator} />
                 : page === 'reports' ? <CoordinatorStudents data={coordinator} reports />
                   : page === 'catalog' ? <div className="legacy-panel"><CoordinatorCatalogPage token={session.token} onPage={changePage} toast={setToast} /></div>
+                  : page === 'team' ? <CoordinatorTeamPage token={session.token} toast={setToast} />
                     : <CoordinatorOverview token={session.token} data={coordinator} onReload={reload} toast={setToast} onPage={changePage} />}
         {pageToast}
       </OrgShell>
@@ -425,10 +430,12 @@ function App() {
     <OrgShell suffix="admin" page={page} onPage={changePage} name={session.user.full_name} onSignOut={signOut}
       nav={[
         { page: 'approvals', label: 'Organisation requests', count: adminRegistrations.length },
+        { page: 'universities', label: 'Universities' },
         { page: 'users', label: 'Users' },
         { page: 'reports', label: 'Activity log' },
       ] as OrgNavItem<Page>[]}>
       {page === 'approvals' ? <AdminRequests token={session.token} registrations={adminRegistrations} onReload={() => void loadLiveRole(session)} toast={setToast} />
+        : page === 'universities' ? <AdminUniversities token={session.token} toast={setToast} />
         : <div className="legacy-panel">
             <LiveRoleWorkspace role="admin" page={page} loading={roleLoading} data={null} records={page === 'users' ? adminUsers : page === 'reports' ? adminAudit : adminRegistrations} onPage={changePage} onRefresh={() => session && void loadLiveRole(session)} onAction={async (id, action, type) => {
               if (!session) return
@@ -939,7 +946,7 @@ function ProfilePage({ profile, token, loading, onSave }: {
           <div className="profile-save-row"><span><ShieldCheck size={15} /> Your profile is only shared with relevant employers.</span><button className="button button-primary" disabled={loading} onClick={() => onSave({ ...form, skills: selectedSkills, interests: selectedInterests }, skillIds, interestIds)}>{loading ? 'Saving…' : 'Save changes'} <ArrowRight size={15} /></button></div>
         </section>
         <aside className="profile-side">
-          <div className="completion-card"><div className="completion-heading"><div><span className="tiny-label">PROFILE STRENGTH</span><strong>{profile.completeness}%</strong></div><span className="completion-ring">{profile.completeness}%</span></div><div className="progress-track"><span style={{ width: `${profile.completeness}%` }} /></div><p>{profile.completeness >= 80 ? 'You’re looking good. Keep your details current.' : 'A stronger profile helps us find better matches.'}</p><ul><li className="complete"><CheckCircle2 size={15} /> Personal details</li><li className={selectedSkills.length ? 'complete' : ''}><CheckCircle2 size={15} /> Skills</li><li className={selectedInterests.length ? 'complete' : ''}><CheckCircle2 size={15} /> Interests</li><li><FileText size={15} /> CV upload not connected yet</li></ul></div>
+          <div className="completion-card"><div className="completion-heading"><div><span className="tiny-label">PROFILE STRENGTH</span><strong>{profile.completeness}%</strong></div><span className="completion-ring">{profile.completeness}%</span></div><div className="progress-track"><span style={{ width: `${profile.completeness}%` }} /></div><p>{profile.completeness >= 80 ? 'You’re looking good. Keep your details current.' : 'A stronger profile helps us find better matches.'}</p><ul><li className="complete"><CheckCircle2 size={15} /> Personal details</li><li className={selectedSkills.length ? 'complete' : ''}><CheckCircle2 size={15} /> Skills</li><li className={selectedInterests.length ? 'complete' : ''}><CheckCircle2 size={15} /> Interests</li><li className={profile.hasCv ? 'complete' : ''}><FileText size={15} /> {profile.hasCv ? 'CV uploaded' : 'CV (upload it above)'}</li></ul></div>
           <div className="verify-card"><div><ShieldCheck size={18} /><strong>University verification</strong></div><p>{profile.verified ? 'Your university has confirmed your student profile.' : 'A university coordinator needs to verify your student details before applications can be submitted.'}</p><span className={`verify-status ${profile.verified ? 'is-verified' : ''}`}><span />{profile.verified ? 'Verified student' : 'Pending review'}</span></div>
           <div className="privacy-note"><ShieldCheck size={15} /><span>Your personal details remain private. Employers see your profile when you apply.</span></div>
         </aside>

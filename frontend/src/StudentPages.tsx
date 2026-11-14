@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Check } from 'lucide-react'
-import { messageApi, savedApi, type MessageThread, type SavedItem } from './api'
+import { alertApi, cvApi, MAX_CV_BYTES, messageApi, savedApi, type CvInfo, type JobAlert, type MessageThread, type SavedItem } from './api'
 import { initialsOf, messageOf, SaveButton, shortDate, Wordmark, type SiteSession } from './PublicSite'
 import { linkTo, navigate } from './router'
 import type { Application, Opportunity, StudentProfile } from './types'
@@ -105,6 +105,7 @@ export function StudentHome({ session, profile, applications, recommendations, r
     { label: 'Choose your programme', done: Boolean(profile.programme) },
     { label: 'Add at least 5 skills', done: profile.skills.length >= 5, action: 'Add' },
     { label: 'Add your interests', done: profile.interests.length > 0, action: 'Add' },
+    { label: 'Upload your CV', done: profile.hasCv, action: 'Upload' },
     { label: 'Add your student number', done: Boolean(profile.studentNumber), action: 'Add' },
   ]
   const done = tasks.filter((task) => task.done).length + (profile.verified ? 1 : 0)
@@ -312,6 +313,7 @@ export function SavedPage({ session, saved, onChange }: { session: SiteSession; 
     <>
       <h1>Saved internships</h1>
       <p className="muted" style={{ margin: '4px 0 18px' }}>Internships you saved to come back to.</p>
+      {session && <JobAlerts token={session.token} />}
       {saved.length === 0 ? <div className="card empty">Nothing saved yet. Use <b>Save</b> on any internship to keep it here. <a {...linkTo('/internships')}>Browse internships</a></div>
         : saved.map((item) => (
           <article key={item.listing_id} className="result-card">
@@ -331,6 +333,116 @@ export function SavedPage({ session, saved, onChange }: { session: SiteSession; 
           </article>
         ))}
     </>
+  )
+}
+
+/** The student's saved searches. New matches are emailed once a day. */
+function JobAlerts({ token }: { token: string }) {
+  const [alerts, setAlerts] = useState<JobAlert[] | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    alertApi.list(token).then((result) => setAlerts(result.alerts)).catch((reason: unknown) => setError(messageOf(reason)))
+  }, [token])
+
+  async function remove(alert: JobAlert) {
+    try {
+      await alertApi.remove(token, alert.alert_id)
+      setAlerts((current) => current?.filter((item) => item.alert_id !== alert.alert_id) ?? null)
+    } catch (reason) {
+      setError(messageOf(reason))
+    }
+  }
+
+  return (
+    <section className="card" style={{ marginBottom: 18 }} aria-label="Job alerts">
+      <h2>Job alerts</h2>
+      <p className="muted" style={{ fontSize: 14, marginTop: 4 }}>We email you once a day when new internships match. Add one with <b>Get alerts for this search</b> on the <a {...linkTo('/internships')}>search page</a>.</p>
+      {error && <div className="notice is-error">{error}</div>}
+      {alerts?.length === 0 && <p className="muted" style={{ marginBottom: 0 }}>No job alerts yet.</p>}
+      {alerts?.map((alert) => (
+        <div key={alert.alert_id} className="todo">
+          <span style={{ flex: 1 }}><a {...linkTo(`/internships?${new URLSearchParams(alert.filters)}`)}>{alert.label}</a>
+            <span className="muted" style={{ fontSize: 13 }}> · {alert.last_sent_at ? `last email ${shortDate(alert.last_sent_at)}` : 'no matches emailed yet'}</span></span>
+          <button className="btn btn-sm" onClick={() => void remove(alert)}>Remove</button>
+        </div>
+      ))}
+    </section>
+  )
+}
+
+function fileSize(bytes: number) {
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
+
+/** Upload, replace, download or remove the student's CV. Employers see it when the student applies. */
+export function CvCard({ token, onChange }: { token: string; onChange?: () => void }) {
+  const [cv, setCv] = useState<CvInfo | null | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [dragging, setDragging] = useState(false)
+
+  useEffect(() => {
+    cvApi.info(token).then((result) => setCv(result.cv)).catch((reason: unknown) => setError(messageOf(reason)))
+  }, [token])
+
+  async function upload(file: File | undefined) {
+    if (!file) return
+    setError('')
+    if (!/\.(pdf|docx)$/i.test(file.name)) {
+      setError('Upload your CV as a PDF or Word (.docx) file.')
+      return
+    }
+    if (file.size > MAX_CV_BYTES) {
+      setError(`That file is ${fileSize(file.size)}. Your CV must be 4 MB or smaller.`)
+      return
+    }
+    setBusy(true)
+    try {
+      setCv((await cvApi.upload(token, file)).cv)
+      onChange?.()
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm('Remove your CV? Employers will no longer see it.')) return
+    setBusy(true)
+    try {
+      await cvApi.remove(token)
+      setCv(null)
+      onChange?.()
+    } catch (reason) {
+      setError(messageOf(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="card" style={{ marginBottom: 18 }} aria-label="CV">
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'baseline' }}>
+        <h2>Your CV</h2>
+        <span className="muted" style={{ fontSize: 13 }}>PDF or Word (.docx), up to 4 MB. Employers see it when you apply.</span>
+      </div>
+      {cv === undefined && !error && <p className="muted">Loading…</p>}
+      {cv && <div className="cv-file">
+        <span className="logo-box">{cv.content_type.includes('pdf') ? 'PDF' : 'DOC'}</span>
+        <div style={{ flex: 1, minWidth: 0 }}><b style={{ overflowWrap: 'anywhere' }}>{cv.filename}</b><div className="muted" style={{ fontSize: 13 }}>{fileSize(cv.size_bytes)} · uploaded {shortDate(cv.uploaded_at)}</div></div>
+        <button className="btn btn-sm" disabled={busy} onClick={() => void cvApi.download(token).catch((reason: unknown) => setError(messageOf(reason)))}>Download</button>
+        <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => void remove()}>Remove</button>
+      </div>}
+      {cv !== undefined && <label className={`dropzone ${dragging ? 'is-over' : ''}`}
+        onDragOver={(event) => { event.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)}
+        onDrop={(event) => { event.preventDefault(); setDragging(false); void upload(event.dataTransfer.files[0]) }}>
+        <input type="file" className="sr-only" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          disabled={busy} onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = '' }} />
+        {busy ? 'Uploading…' : <>{cv ? 'Replace your CV: drop a new file here or ' : 'Drop your CV here or '}<span className="btn-link">browse</span></>}
+      </label>}
+      {error && <div className="notice is-error" role="alert" style={{ marginTop: 10 }}>{error}</div>}
+    </section>
   )
 }
 
