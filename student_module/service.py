@@ -34,7 +34,7 @@ def _clean_text(value: Any, label: str, *, max_length: int, required: bool = Tru
 def list_universities(conn) -> list[dict]:
     with conn.cursor(row_factory=dict_row) as cur:
         return cur.execute(
-            "SELECT university_id AS id, name, location FROM universities "
+            "SELECT university_id AS id, name, location, email_domain FROM universities "
             "WHERE status = 'verified' ORDER BY name"
         ).fetchall()
 

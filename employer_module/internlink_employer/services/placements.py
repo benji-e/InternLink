@@ -46,7 +46,7 @@ def list_my_placements(db, session: Session, status=None) -> list[dict]:
         JOIN programmes pr ON pr.programme_id = sp.programme_id
         WHERE l.company_id = %s
           AND p.status IN ('pending', 'confirmed', 'completed')
-          AND (%s IS NULL OR p.status = %s)
+          AND (CAST(%s AS TEXT) IS NULL OR p.status = %s)
         ORDER BY COALESCE(p.end_date, %s), p.placement_id
         """,
         [

@@ -62,7 +62,7 @@ def list_applicants(
                university, match_score, status, submitted_at,
                (cv_path IS NOT NULL) AS has_cv
         FROM v_employer_applicants
-        WHERE company_id = %s AND listing_id = %s AND (%s IS NULL OR status = %s)
+        WHERE company_id = %s AND listing_id = %s AND (CAST(%s AS TEXT) IS NULL OR status = %s)
         ORDER BY CASE WHEN {column} IS NULL THEN 1 ELSE 0 END,
                  {column} {direction}, submitted_at ASC
         LIMIT %s OFFSET %s

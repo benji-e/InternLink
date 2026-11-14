@@ -99,6 +99,34 @@ class VercelEntryPointTests(ServerTestCase):
         self.assertEqual(status, 403)
         self.assertEqual(json.loads(body)["error"]["code"], "ROLE_REQUIRED")
 
+    def test_student_token_cannot_manage_university_catalog(self):
+        secret = "test-signing-secret-that-is-at-least-32-characters"
+        token = jwt.encode(
+            {"sub": "25", "role": "student", "exp": datetime.now(timezone.utc) + timedelta(minutes=5)},
+            secret,
+            algorithm="HS256",
+        )
+        with patch.dict(os.environ, {"INTERNLINK_JWT_SECRET": secret}):
+            for method, path in (
+                ("GET", "/api/v1/coordinator/catalog"),
+                ("POST", "/api/v1/coordinator/departments"),
+                ("POST", "/api/v1/coordinator/programmes"),
+            ):
+                status, _, body = self.request(
+                    path,
+                    method=method,
+                    body=b"{}" if method == "POST" else None,
+                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                )
+                self.assertEqual(status, 403, path)
+                self.assertEqual(json.loads(body)["error"]["code"], "ROLE_REQUIRED")
+
+    def test_catalog_write_routes_only_accept_post(self):
+        for path in ("/api/v1/coordinator/departments", "/api/v1/coordinator/programmes"):
+            status, headers, _ = self.request(path)
+            self.assertEqual(status, 405, path)
+            self.assertEqual(headers["Allow"], "POST")
+
     def test_unknown_route_returns_not_found(self):
         status, _, body = self.request("/not-an-api-route")
         self.assertEqual(status, 404)

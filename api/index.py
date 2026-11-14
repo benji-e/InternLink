@@ -20,6 +20,7 @@ from urllib.request import Request as URLRequest, urlopen
 
 import jwt
 import psycopg
+from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from employer_module.internlink_employer.adapters import LocalFileStorage, MemoryNotifier
@@ -36,6 +37,7 @@ from matching_engine.service import (
     student_id_for_user,
 )
 from student_module import accounts as account_service
+from student_module import catalog as catalog_service
 from student_module import service as student_service
 
 logger = logging.getLogger("internlink.vercel")
@@ -202,6 +204,9 @@ class handler(BaseHTTPRequestHandler):
             "/api/v1/coordinator/dashboard": ("GET", self._coordinator_dashboard),
             "/api/v1/coordinator/students": ("GET", self._coordinator_students),
             "/api/v1/coordinator/placements": ("GET", self._coordinator_placements),
+            "/api/v1/coordinator/catalog": ("GET", self._coordinator_catalog),
+            "/api/v1/coordinator/departments": ("POST", self._coordinator_add_department),
+            "/api/v1/coordinator/programmes": ("POST", self._coordinator_add_programme),
             "/api/v1/public/universities": ("GET", self._student_universities),
             "/api/v1/public/catalogs": ("GET", self._student_catalogs),
             "/api/v1/students/me/profile": ("GET, PUT", self._student_profile),
@@ -593,13 +598,20 @@ class handler(BaseHTTPRequestHandler):
         try:
             user_id, role = self._authorized_user_id(allowed_roles)
             with self._student_connection() as conn:
-                account = conn.execute(
-                    "SELECT role, status FROM users WHERE user_id = %s",
-                    (user_id,),
-                ).fetchone()
-                if account is None or account["role"] != role or account["status"] != "active":
-                    raise student_service.StudentError(403, "ACCOUNT_NOT_ACTIVE", "Your account is not active.")
-                result = callback(conn, user_id)
+                # Role handlers read columns by name; pooled connections return
+                # tuples by default, so switch for this request only.
+                default_row_factory = conn.row_factory
+                conn.row_factory = dict_row
+                try:
+                    account = conn.execute(
+                        "SELECT role, status FROM users WHERE user_id = %s",
+                        (user_id,),
+                    ).fetchone()
+                    if account is None or account["role"] != role or account["status"] != "active":
+                        raise student_service.StudentError(403, "ACCOUNT_NOT_ACTIVE", "Your account is not active.")
+                    result = callback(conn, user_id)
+                finally:
+                    conn.row_factory = default_row_factory
             self._send_json(200, result)
         except student_service.StudentError as exc:
             self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
@@ -733,7 +745,7 @@ class handler(BaseHTTPRequestHandler):
                        coalesce(sum(pending), 0) AS pending,
                        coalesce(sum(unplaced), 0) AS unplaced
                 FROM v_department_placement_stats
-                WHERE university_id = %s AND (%s IS NULL OR department_id = %s)
+                WHERE university_id = %s AND (%s::bigint IS NULL OR department_id = %s)
                 """,
                 (scope["university_id"], scope["department_id"], scope["department_id"]),
             ).fetchone()
@@ -752,7 +764,7 @@ class handler(BaseHTTPRequestHandler):
                 JOIN users u ON u.user_id = sp.user_id
                 JOIN programmes p ON p.programme_id = sp.programme_id
                 LEFT JOIN v_student_placement_state ps ON ps.student_id = sp.student_id
-                WHERE sp.university_id = %s AND (%s IS NULL OR sp.department_id = %s)
+                WHERE sp.university_id = %s AND (%s::bigint IS NULL OR sp.department_id = %s)
                 ORDER BY u.full_name
                 """,
                 (scope["university_id"], scope["department_id"], scope["department_id"]),
@@ -768,13 +780,39 @@ class handler(BaseHTTPRequestHandler):
                 SELECT placement_id, queued_at, student_id, student_name, student_number,
                        programme, company_name, listing_title, application_id
                 FROM v_pending_placements
-                WHERE university_id = %s AND (%s IS NULL OR department_id = %s)
+                WHERE university_id = %s AND (%s::bigint IS NULL OR department_id = %s)
                 ORDER BY queued_at
                 """,
                 (scope["university_id"], scope["department_id"], scope["department_id"]),
             ).fetchall()
             return {"placements": rows}
         self._role_call(placements, {"coordinator"})
+
+    def _coordinator_catalog(self):
+        def catalog(conn, user_id):
+            scope = self._coordinator_scope(conn, user_id)
+            return catalog_service.list_catalog(conn, scope["university_id"], scope["department_id"])
+        self._role_call(catalog, {"coordinator"})
+
+    def _coordinator_add_department(self):
+        self._coordinator_catalog_write(catalog_service.add_department)
+
+    def _coordinator_add_programme(self):
+        self._coordinator_catalog_write(catalog_service.add_programme)
+
+    def _coordinator_catalog_write(self, method):
+        try:
+            payload = self._read_json_request()
+        except student_service.StudentError as exc:
+            self._send_json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
+            return
+
+        def write(conn, user_id):
+            scope = self._coordinator_scope(conn, user_id)
+            with conn.transaction():
+                conn.execute("SELECT set_config('app.user_id', %s, true)", (str(user_id),))
+                return method(conn, scope["university_id"], scope["department_id"], payload)
+        self._role_call(write, {"coordinator"})
 
     def _coordinator_verify_student(self, student_id: int):
         def verify(conn, user_id):
@@ -785,7 +823,7 @@ class handler(BaseHTTPRequestHandler):
                     """
                     UPDATE student_profiles SET verified = true
                     WHERE student_id = %s AND university_id = %s
-                      AND (%s IS NULL OR department_id = %s)
+                      AND (%s::bigint IS NULL OR department_id = %s)
                     """,
                     (student_id, scope["university_id"], scope["department_id"], scope["department_id"]),
                 )
@@ -819,7 +857,7 @@ class handler(BaseHTTPRequestHandler):
                     FROM applications a JOIN student_profiles sp ON sp.student_id = a.student_id
                     WHERE p.application_id = a.application_id AND p.placement_id = %s
                       AND p.status = 'pending' AND sp.university_id = %s
-                      AND (%s IS NULL OR sp.department_id = %s)
+                      AND (%s::bigint IS NULL OR sp.department_id = %s)
                     """,
                     (action, None if action == "confirmed" else reason.strip(), placement_id,
                      scope["university_id"], scope["department_id"], scope["department_id"]),

@@ -1,5 +1,5 @@
 export type Role = 'student' | 'employer' | 'university' | 'admin'
-export type Page = 'dashboard' | 'browse' | 'applications' | 'notifications' | 'profile' | 'applicants' | 'students' | 'approvals' | 'users' | 'listings' | 'messages' | 'reports'
+export type Page = 'dashboard' | 'browse' | 'applications' | 'notifications' | 'profile' | 'applicants' | 'students' | 'approvals' | 'users' | 'listings' | 'messages' | 'reports' | 'catalog'
 
 export type Opportunity = {
   id: number
